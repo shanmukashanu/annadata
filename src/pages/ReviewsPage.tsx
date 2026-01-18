@@ -138,12 +138,12 @@ const ReviewsPage: React.FC = () => {
           </p>
           <div className="flex items-center justify-center space-x-4">
             <img
-              src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100"
+              src="madhu.jpg"
               alt="Featured Review"
               className="w-16 h-16 rounded-full object-cover border-2 border-white"
             />
             <div className="text-left">
-              <p className="font-semibold text-lg">Amit Patel</p>
+              <p className="font-semibold text-lg">Madhu</p>
               <p className="text-green-200">Restaurant Owner, Bangalore</p>
             </div>
           </div>
