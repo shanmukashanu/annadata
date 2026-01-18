@@ -5,7 +5,6 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -41,11 +40,31 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => ({ folder: process.env.CLOUDINARY_FOLDER || 'site-media' }),
-});
-const upload = multer({ storage });
+// Use in-memory storage to stream uploads to Cloudinary with compression for faster uploads
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB cap
+
+const uploadToCloudinary = (buffer, options = {}) =>
+  new Promise((resolve, reject) => {
+    const folder = process.env.CLOUDINARY_FOLDER || 'site-media';
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type: options.resource_type || 'image',
+        // Apply sane defaults for faster, smaller uploads
+        transformation: options.transformation || [
+          { quality: 'auto', fetch_format: 'auto' },
+          { width: 1600, crop: 'limit' },
+        ],
+        // Give Cloudinary a reasonable timeout
+        timeout: 60000,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+    stream.end(buffer);
+  });
 
 // Admin auth: allow either x-admin-key or Bearer JWT
 const authenticateAdmin = (req, res, next) => {
@@ -205,9 +224,18 @@ app.get('/api/reviews', async (req, res) => {
 });
 app.post('/api/reviews', authenticateAdmin, upload.single('image'), async (req, res) => {
   const { name, text, imageUrl: imageUrlBody } = req.body;
-  const imageUrl = req.file?.path || imageUrlBody;
-  const created = await Review.create({ name, text, imageUrl });
-  res.status(201).json(created);
+  try {
+    let imageUrl = imageUrlBody;
+    if (req.file?.buffer) {
+      const uploaded = await uploadToCloudinary(req.file.buffer);
+      imageUrl = uploaded.secure_url;
+    }
+    const created = await Review.create({ name, text, imageUrl });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 app.delete('/api/reviews/:id', authenticateAdmin, async (req, res) => {
   await Review.findByIdAndDelete(req.params.id);
@@ -220,9 +248,18 @@ app.get('/api/products', async (req, res) => {
 });
 app.post('/api/products', authenticateAdmin, upload.single('image'), async (req, res) => {
   const { name, description, price, videoUrl, whatsappNumber, imageUrl: imageUrlBody } = req.body;
-  const imageUrl = req.file?.path || imageUrlBody;
-  const created = await Product.create({ name, description, price, videoUrl, whatsappNumber, imageUrl });
-  res.status(201).json(created);
+  try {
+    let imageUrl = imageUrlBody;
+    if (req.file?.buffer) {
+      const uploaded = await uploadToCloudinary(req.file.buffer);
+      imageUrl = uploaded.secure_url;
+    }
+    const created = await Product.create({ name, description, price, videoUrl, whatsappNumber, imageUrl });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 app.delete('/api/products/:id', authenticateAdmin, async (req, res) => {
   await Product.findByIdAndDelete(req.params.id);
@@ -235,9 +272,28 @@ app.get('/api/blogs', async (req, res) => {
 });
 app.post('/api/blogs', authenticateAdmin, upload.single('media'), async (req, res) => {
   const { title, content, mediaType, mediaUrl: mediaUrlBody } = req.body;
-  const mediaUrl = req.file?.path || mediaUrlBody;
-  const created = await Blog.create({ title, content, mediaType: mediaType || (mediaUrl ? 'image' : 'none'), mediaUrl });
-  res.status(201).json(created);
+  try {
+    let mediaUrl = mediaUrlBody;
+    let finalType = (mediaType || '').toLowerCase();
+    if (req.file?.buffer) {
+      // Detect by provided type hint; default to image
+      const isVideo = finalType === 'video' || (req.file.mimetype || '').startsWith('video/');
+      const uploaded = await uploadToCloudinary(req.file.buffer, {
+        resource_type: isVideo ? 'video' : 'image',
+        transformation: isVideo ? undefined : [
+          { quality: 'auto', fetch_format: 'auto' },
+          { width: 1600, crop: 'limit' },
+        ],
+      });
+      mediaUrl = uploaded.secure_url;
+      finalType = isVideo ? 'video' : 'image';
+    }
+    const created = await Blog.create({ title, content, mediaType: finalType || (mediaUrl ? 'image' : 'none'), mediaUrl });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 app.delete('/api/blogs/:id', authenticateAdmin, async (req, res) => {
   await Blog.findByIdAndDelete(req.params.id);
@@ -289,9 +345,18 @@ app.get('/api/lucky-farmers', async (req, res) => {
 });
 app.post('/api/lucky-farmers', authenticateAdmin, upload.single('image'), async (req, res) => {
   const { name, content, phone, imageUrl: imageUrlBody } = req.body;
-  const imageUrl = req.file?.path || imageUrlBody;
-  const created = await LuckyFarmer.create({ name, content, phone, imageUrl });
-  res.status(201).json(created);
+  try {
+    let imageUrl = imageUrlBody;
+    if (req.file?.buffer) {
+      const uploaded = await uploadToCloudinary(req.file.buffer);
+      imageUrl = uploaded.secure_url;
+    }
+    const created = await LuckyFarmer.create({ name, content, phone, imageUrl });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 app.delete('/api/lucky-farmers/:id', authenticateAdmin, async (req, res) => {
   await LuckyFarmer.findByIdAndDelete(req.params.id);
@@ -304,9 +369,18 @@ app.get('/api/lucky-subscribers', async (req, res) => {
 });
 app.post('/api/lucky-subscribers', authenticateAdmin, upload.single('image'), async (req, res) => {
   const { name, content, phone, imageUrl: imageUrlBody } = req.body;
-  const imageUrl = req.file?.path || imageUrlBody;
-  const created = await LuckySubscriber.create({ name, content, phone, imageUrl });
-  res.status(201).json(created);
+  try {
+    let imageUrl = imageUrlBody;
+    if (req.file?.buffer) {
+      const uploaded = await uploadToCloudinary(req.file.buffer);
+      imageUrl = uploaded.secure_url;
+    }
+    const created = await LuckySubscriber.create({ name, content, phone, imageUrl });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 app.delete('/api/lucky-subscribers/:id', authenticateAdmin, async (req, res) => {
   await LuckySubscriber.findByIdAndDelete(req.params.id);
@@ -316,8 +390,9 @@ app.delete('/api/lucky-subscribers/:id', authenticateAdmin, async (req, res) => 
 // Admin image upload helper (returns Cloudinary URL)
 app.post('/api/upload-image', authenticateAdmin, upload.single('image'), async (req, res) => {
   try {
-    if (!req.file?.path) return res.status(400).json({ error: 'No image uploaded' });
-    res.status(201).json({ url: req.file.path });
+    if (!req.file?.buffer) return res.status(400).json({ error: 'No image uploaded' });
+    const uploaded = await uploadToCloudinary(req.file.buffer);
+    res.status(201).json({ url: uploaded.secure_url });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Upload failed' });
@@ -383,15 +458,24 @@ app.get('/api/plans', async (req, res) => {
 });
 app.post('/api/plans', authenticateAdmin, upload.single('image'), async (req, res) => {
   const { title, price, billingPeriod, description, features, popular, order, imageUrl: imageUrlBody } = req.body;
-  const imageUrl = req.file?.path || imageUrlBody;
-  // features can come as JSON array or comma-separated string
-  let feats = [];
-  if (Array.isArray(features)) feats = features;
-  else if (typeof features === 'string') {
-    try { feats = JSON.parse(features); } catch { feats = features.split(',').map(s => s.trim()).filter(Boolean); }
+  try {
+    let imageUrl = imageUrlBody;
+    if (req.file?.buffer) {
+      const uploaded = await uploadToCloudinary(req.file.buffer);
+      imageUrl = uploaded.secure_url;
+    }
+    // features can come as JSON array or comma-separated string
+    let feats = [];
+    if (Array.isArray(features)) feats = features;
+    else if (typeof features === 'string') {
+      try { feats = JSON.parse(features); } catch { feats = features.split(',').map(s => s.trim()).filter(Boolean); }
+    }
+    const created = await Plan.create({ title, price, billingPeriod, description, features: feats, imageUrl, popular: popular === 'true' || popular === true, order: Number(order) || 0 });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
   }
-  const created = await Plan.create({ title, price, billingPeriod, description, features: feats, imageUrl, popular: popular === 'true' || popular === true, order: Number(order) || 0 });
-  res.status(201).json(created);
 });
 app.delete('/api/plans/:id', authenticateAdmin, async (req, res) => {
   await Plan.findByIdAndDelete(req.params.id);
