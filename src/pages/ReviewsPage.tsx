@@ -144,7 +144,7 @@ const ReviewsPage: React.FC = () => {
             />
             <div className="text-left">
               <p className="font-semibold text-lg">Madhu</p>
-              <p className="text-green-200">Restaurant Owner, Bangalore</p>
+              <p className="text-green-200">Fruit Bowl  Owner, Bangalore</p>
             </div>
           </div>
         </div>

@@ -1,8 +1,40 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Leaf, Phone, Mail, MapPin, Facebook, Instagram, Twitter, Youtube, Heart } from 'lucide-react';
 
-const Footer: React.FC = () => {
+interface FooterProps {
+  onSecretTrigger?: () => void;
+}
+
+const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
+  const [tapCount, setTapCount] = useState(0);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleSecretTap = () => {
+    // Count 4 taps within 1500ms
+    setTapCount((prev) => {
+      const next = prev + 1;
+      if (next === 1) {
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => setTapCount(0), 1500);
+      }
+      if (next >= 4) {
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+        setTapCount(0);
+        onSecretTrigger?.();
+        return 0;
+      }
+      return next;
+    });
+  };
+
   return (
     <footer className="bg-gradient-to-b from-green-900 to-green-950 text-white">
       {/* Main Footer */}
@@ -113,7 +145,7 @@ const Footer: React.FC = () => {
       </div>
 
       {/* Bottom Bar */}
-      <div className="border-t border-green-800">
+      <div className="border-t border-green-800" onClick={handleSecretTap}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
             <p className="text-green-300 text-sm">

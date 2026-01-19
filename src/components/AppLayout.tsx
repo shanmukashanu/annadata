@@ -20,12 +20,27 @@ import OrderTrackingPage from '@/pages/OrderTrackingPage';
 import NotFound from '@/pages/NotFound';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { CartProvider } from '@/contexts/CartContext';
+import DeveloperInfoModal from './DeveloperInfoModal';
+import { useEffect } from 'react';
 
 const AppLayout: React.FC = () => {
   const [showCallback, setShowCallback] = useState(false);
+  const [showDevInfo, setShowDevInfo] = useState(false);
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
   const isCheckoutRoute = location.pathname === '/checkout';
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const key = (e.key || '').toLowerCase();
+      if (e.ctrlKey && key === 'm') {
+        e.preventDefault();
+        setShowDevInfo(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <AuthProvider>
@@ -53,7 +68,7 @@ const AppLayout: React.FC = () => {
             </Routes>
           </main>
 
-          {!isAdminRoute && !isCheckoutRoute && <Footer />}
+          {!isAdminRoute && !isCheckoutRoute && <Footer onSecretTrigger={() => setShowDevInfo(true)} />}
           
           {!isAdminRoute && !isCheckoutRoute && (
             <FloatingCallbackButton onClick={() => setShowCallback(true)} />
@@ -62,6 +77,11 @@ const AppLayout: React.FC = () => {
           <CallbackModal
             isOpen={showCallback}
             onClose={() => setShowCallback(false)}
+          />
+
+          <DeveloperInfoModal
+            isOpen={showDevInfo}
+            onClose={() => setShowDevInfo(false)}
           />
 
           <CartSidebar />
