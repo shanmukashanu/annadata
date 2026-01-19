@@ -8,7 +8,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
-type TabType = 'orders' | 'products' | 'reviews' | 'blogs' | 'floating' | 'contacts' | 'callbacks' | 'enquiries' | 'farmers' | 'subscribers' | 'plans' | 'newsletter' | 'participants' | 'payments';
+type TabType = 'orders' | 'products' | 'reviews' | 'blogs' | 'floating' | 'contacts' | 'callbacks' | 'enquiries' | 'farmers' | 'subscribers' | 'plans' | 'newsletter' | 'participants' | 'payments' | 'paid_orders';
 
 const AdminPage: React.FC = () => {
   const { isAdmin, logout, adminEmail, token } = useAuth();
@@ -368,6 +368,7 @@ const AdminPage: React.FC = () => {
     { id: 'newsletter', label: 'Newsletter', icon: Mail },
     { id: 'participants', label: 'Participants', icon: Users },
     { id: 'payments', label: 'Payments', icon: CreditCard },
+    { id: 'paid_orders', label: 'Paid Orders', icon: CreditCard },
   ];
 
   const orderStatuses = [
@@ -885,7 +886,7 @@ const AdminPage: React.FC = () => {
       return renderOrdersTable();
     }
 
-    if (activeTab === 'payments') {
+    if (activeTab === 'payments' || activeTab === 'paid_orders') {
       if (loading) {
         return (
           <div className="flex items-center justify-center py-20">
@@ -905,7 +906,8 @@ const AdminPage: React.FC = () => {
         fetchData();
       };
 
-      if (data.length === 0) {
+      const rows = activeTab === 'paid_orders' ? (data as any[]).filter((p) => p.status === 'approved') : data;
+      if (rows.length === 0) {
         return <div className="text-center py-20 text-gray-500">No payments found.</div>;
       }
       return (
@@ -924,7 +926,7 @@ const AdminPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {data.map((p: any) => (
+              {rows.map((p: any) => (
                 <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-4 text-sm font-medium text-green-600">{p.orderNumber}</td>
                   <td className="px-4 py-4 text-sm">{p.customerName || '-'}</td>
@@ -940,8 +942,12 @@ const AdminPage: React.FC = () => {
                     ) : '-'}
                   </td>
                   <td className="px-4 py-4 text-right space-x-2">
-                    <button onClick={() => approve(p.id, p.orderNumber)} className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200" disabled={p.status === 'approved'}>Approve</button>
-                    <button onClick={() => reject(p.id)} className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200" disabled={p.status === 'rejected'}>Reject</button>
+                    {activeTab === 'payments' && (
+                      <>
+                        <button onClick={() => approve(p.id, p.orderNumber)} className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200" disabled={p.status === 'approved'}>Approve</button>
+                        <button onClick={() => reject(p.id)} className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200" disabled={p.status === 'rejected'}>Reject</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

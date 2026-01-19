@@ -18,6 +18,7 @@ const CheckoutPage: React.FC = () => {
   const [countdown, setCountdown] = useState(0); // seconds for QR timer
   const [proofUploading, setProofUploading] = useState(false);
   const [proofMessage, setProofMessage] = useState('');
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -61,6 +62,94 @@ const CheckoutPage: React.FC = () => {
 
   const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
 
+  // Core order placement shared so that payment uploads can also create the order
+  const placeOrderCore = async (forcedOrderNumber?: string) => {
+    const newOrderNumber = forcedOrderNumber || orderNumber || generateOrderNumber();
+    const { data: orderData, error: orderError } = await supabase
+      .from('orders')
+      .insert([
+        {
+          order_number: newOrderNumber,
+          customer_name: formData.name,
+          customer_phone: formData.phone,
+          customer_email: formData.email,
+          delivery_address: formData.address,
+          delivery_city: formData.city,
+          delivery_pincode: formData.pincode,
+          delivery_landmark: formData.landmark,
+          subtotal: getTotal(),
+          delivery_fee: deliveryFee,
+          total: finalTotal,
+          status: 'pending',
+          payment_method: formData.paymentMethod,
+          notes: formData.notes,
+        },
+      ])
+      .select()
+      .single();
+    if (orderError) throw orderError;
+
+    const isUuid = (v: any) =>
+      typeof v === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+    const orderItems = items.map((item) => ({
+      order_id: orderData.id,
+      product_id: isUuid(item.id) ? item.id : null,
+      product_name: item.name,
+      product_price: item.price,
+      quantity: item.quantity,
+      total: item.price * item.quantity,
+    }));
+    const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
+    if (itemsError) throw itemsError;
+
+    // Create plan subscriptions if needed
+    try {
+      const planItemIds = items
+        .filter((it) => String(it.id).startsWith('plan_'))
+        .map((it) => String(it.id).replace('plan_', ''));
+      if (planItemIds.length > 0) {
+        const plansRes = await fetch(`${API_URL}/api/plans`);
+        const plansJson: any[] = await plansRes.json();
+        const planMap = new Map<string, any>();
+        plansJson.forEach((p: any) => planMap.set(String(p._id || p.id), p));
+        for (const pid of planItemIds) {
+          const plan = planMap.get(pid);
+          if (!plan) continue;
+          const bp: string = plan.billingPeriod || 'monthly';
+          const totalDays = bp === 'weekly' ? 7 : bp === 'monthly' ? 30 : bp === 'per_year' ? 365 : 7;
+          const { data: subData, error: subErr } = await supabase
+            .from('plan_subscriptions')
+            .insert([
+              {
+                order_id: orderData.id,
+                plan_backend_id: String(plan._id || plan.id),
+                plan_title: plan.title,
+                billing_period: bp,
+                total_days: totalDays,
+              },
+            ])
+            .select()
+            .single();
+          if (!subErr) {
+            const deliveries = Array.from({ length: totalDays }, (_, i) => ({
+              subscription_id: subData.id,
+              day_number: i + 1,
+              status: 'pending',
+            }));
+            await supabase.from('plan_deliveries').insert(deliveries);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Plan creation error:', err);
+    }
+
+    setOrderNumber(newOrderNumber);
+    setOrderPlaced(true);
+    clearCart();
+  };
+
   const uploadPaymentProof = async (method: 'qr' | 'upi' | 'card', file: File) => {
     try {
       setProofUploading(true);
@@ -77,7 +166,13 @@ const CheckoutPage: React.FC = () => {
       fd.append('proof', file);
       const res = await fetch(`${API_URL}/api/payments`, { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Upload failed');
+      // Ensure order exists
+      if (!orderPlaced) {
+        await placeOrderCore(currentOrderNumber);
+      }
       setProofMessage('Payment is verifying. Once confirmed, we will inform you. Thank you!');
+      setShowVerifyModal(true);
+      setTimeout(() => setShowVerifyModal(false), 3000);
     } catch (e) {
       setProofMessage('Upload failed. Please try again.');
     } finally {
@@ -261,6 +356,16 @@ const CheckoutPage: React.FC = () => {
             </Link>
           </div>
         </div>
+        {showVerifyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50" />
+            <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+              <div className="mx-auto mb-4 w-16 h-16 rounded-full border-4 border-green-200 border-t-green-600 animate-spin" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Verifying Payment</h3>
+              <p className="text-gray-600">Once verified we will inform shortly. Thank you!</p>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -593,6 +698,16 @@ const CheckoutPage: React.FC = () => {
           </div>
         </div>
       </div>
+      {showVerifyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+            <div className="mx-auto mb-4 w-16 h-16 rounded-full border-4 border-green-2 00 border-t-green-600 animate-spin" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Verifying Payment</h3>
+            <p className="text-gray-600">Once verified we will inform shortly. Thank you!</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
