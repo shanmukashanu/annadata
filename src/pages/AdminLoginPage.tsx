@@ -103,7 +103,7 @@ const AdminLoginPage: React.FC = () => {
           </button>
 
           <p className="text-center text-sm text-gray-500">
-            Default: admin@annadata.com / shannu@6677
+            :eshanmuka.onrender.com
           </p>
         </form>
       </div>
