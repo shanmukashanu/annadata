@@ -22,6 +22,10 @@ const AdminPage: React.FC = () => {
   const [formData, setFormData] = useState<any>({});
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [orderItems, setOrderItems] = useState<any[]>([]);
+  const [orderItemsByOrder, setOrderItemsByOrder] = useState<Record<string, any[]>>({});
+  const [searchTerm, setSearchTerm] = useState('');
+  const [planSubs, setPlanSubs] = useState<any[]>([]);
+  const [planDeliveries, setPlanDeliveries] = useState<Record<string, any[]>>({});
 
   useEffect(() => {
     if (!isAdmin) {
@@ -74,7 +78,22 @@ const AdminPage: React.FC = () => {
         .from(getTableName())
         .select('*')
         .order('created_at', { ascending: false });
-      setData(result || []);
+      const rows = result || [];
+      setData(rows);
+      // Prefetch order_items for Orders tab to support filtering by item names
+      if (activeTab === 'orders' && rows.length) {
+        const orderIds = rows.map((r: any) => r.id);
+        const { data: itemsData } = await supabase
+          .from('order_items')
+          .select('*')
+          .in('order_id', orderIds);
+        const map: Record<string, any[]> = {};
+        (itemsData || []).forEach((it) => {
+          if (!map[it.order_id]) map[it.order_id] = [];
+          map[it.order_id].push(it);
+        });
+        setOrderItemsByOrder(map);
+      }
     }
     setLoading(false);
   };
@@ -206,6 +225,43 @@ const AdminPage: React.FC = () => {
       .select('*')
       .eq('order_id', order.id);
     setOrderItems(items || []);
+    // Load plan subscriptions and deliveries for this order
+    const { data: subs } = await supabase
+      .from('plan_subscriptions')
+      .select('*')
+      .eq('order_id', order.id);
+    setPlanSubs(subs || []);
+    const deliveriesMap: Record<string, any[]> = {};
+    for (const sub of subs || []) {
+      const { data: dels } = await supabase
+        .from('plan_deliveries')
+        .select('*')
+        .eq('subscription_id', sub.id)
+        .order('day_number', { ascending: true });
+      deliveriesMap[sub.id] = dels || [];
+    }
+    setPlanDeliveries(deliveriesMap);
+  };
+
+  const updateDeliveryStatus = async (subscriptionId: string, dayNumber: number, newStatus: string) => {
+    await supabase
+      .from('plan_deliveries')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('subscription_id', subscriptionId)
+      .eq('day_number', dayNumber);
+    // Recompute delivered_count and update subscription
+    const { data: dels } = await supabase
+      .from('plan_deliveries')
+      .select('status')
+      .eq('subscription_id', subscriptionId);
+    const deliveredCount = (dels || []).filter((d) => d.status === 'delivered').length;
+    await supabase
+      .from('plan_subscriptions')
+      .update({ delivered_count: deliveredCount })
+      .eq('id', subscriptionId);
+    // refresh local state
+    setPlanDeliveries((prev) => ({ ...prev, [subscriptionId]: (prev[subscriptionId] || []).map((d) => d.day_number === dayNumber ? { ...d, status: newStatus } : d) }));
+    setPlanSubs((prev) => prev.map((s) => s.id === subscriptionId ? { ...s, delivered_count: deliveredCount } : s));
   };
 
   const tabs = [
@@ -259,7 +315,19 @@ const AdminPage: React.FC = () => {
       );
     }
 
-    if (data.length === 0) {
+    const filtered = data.filter((order) => {
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.trim().toLowerCase();
+      const basicMatch =
+        String(order.order_number || '').toLowerCase().includes(term) ||
+        String(order.customer_name || '').toLowerCase().includes(term) ||
+        String(order.customer_phone || '').toLowerCase().includes(term);
+      if (basicMatch) return true;
+      const items = orderItemsByOrder[order.id] || [];
+      return items.some((it) => String(it.product_name || '').toLowerCase().includes(term));
+    });
+
+    if (filtered.length === 0) {
       return (
         <div className="text-center py-20 text-gray-500">
           No orders found.
@@ -269,6 +337,14 @@ const AdminPage: React.FC = () => {
 
     return (
       <div className="overflow-x-auto">
+        <div className="p-4 flex items-center justify-between">
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search by name, phone, order #, product/plan..."
+            className="w-full md:w-1/2 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
+          />
+        </div>
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
@@ -281,7 +357,7 @@ const AdminPage: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {data.map((order) => (
+            {filtered.map((order) => (
               <tr key={order.id} className="hover:bg-gray-50">
                 <td className="px-4 py-4 text-sm font-medium text-green-600">{order.order_number}</td>
                 <td className="px-4 py-4 text-sm">
@@ -402,6 +478,45 @@ const AdminPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Plan Subscriptions */}
+            {planSubs.length > 0 && (
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">Plan Subscriptions</h4>
+                <div className="space-y-4">
+                  {planSubs.map((sub) => (
+                    <div key={sub.id} className="bg-gray-50 rounded-xl p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-gray-900">{sub.plan_title}</p>
+                          <p className="text-sm text-gray-600">{sub.billing_period} • {sub.delivered_count}/{sub.total_days} delivered</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {(planDeliveries[sub.id] || []).map((d) => (
+                          <div key={d.day_number} className="bg-white border rounded-lg p-2 text-sm">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-medium">Day {d.day_number}</span>
+                            </div>
+                            <select
+                              value={d.status}
+                              onChange={(e) => updateDeliveryStatus(sub.id, d.day_number, e.target.value)}
+                              className="w-full px-2 py-1 border rounded"
+                            >
+                              <option value="pending">pending</option>
+                              <option value="shipped">shipped</option>
+                              <option value="out_for_delivery">out_for_delivery</option>
+                              <option value="delivered">delivered</option>
+                              <option value="rejected">rejected</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Order Summary */}
             <div className="bg-green-50 rounded-xl p-4">
               <div className="space-y-2">
@@ -502,7 +617,19 @@ const AdminPage: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1 capitalize">
                   {field.name.replace('_', ' ')} {field.required && '*'}
                 </label>
-                {field.type === 'textarea' ? (
+                {field.name === 'billingPeriod' ? (
+                  <select
+                    value={formData.billingPeriod || 'monthly'}
+                    onChange={(e) => setFormData({ ...formData, billingPeriod: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 bg-white"
+                  >
+                    <option value="weekly">weekly</option>
+                    <option value="monthly">monthly</option>
+                    <option value="per_day">per_day</option>
+                    <option value="per_serve">per_serve</option>
+                    <option value="per_year">per_year</option>
+                  </select>
+                ) : field.type === 'textarea' ? (
                   <textarea
                     value={formData[field.name] || ''}
                     onChange={(e) => setFormData({ ...formData, [field.name]: e.target.value })}

@@ -84,6 +84,61 @@ const CheckoutPage: React.FC = () => {
 
       if (itemsError) throw itemsError;
 
+      // Create plan subscriptions (if cart contains any plans)
+      try {
+        const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+        // identify plan items: ids starting with 'plan_'
+        const planItemIds = items
+          .filter((it) => String(it.id).startsWith('plan_'))
+          .map((it) => String(it.id).replace('plan_', ''));
+        if (planItemIds.length > 0) {
+          // fetch plans from backend and build map
+          const plansRes = await fetch(`${API_URL}/api/plans`);
+          const plansJson: any[] = await plansRes.json();
+          const planMap = new Map<string, any>();
+          plansJson.forEach((p: any) => planMap.set(String(p._id || p.id), p));
+
+          for (const pid of planItemIds) {
+            const plan = planMap.get(pid);
+            if (!plan) continue;
+            const bp: string = plan.billingPeriod || 'monthly';
+            const totalDays = bp === 'weekly' ? 7 : bp === 'monthly' ? 30 : bp === 'per_year' ? 365 : 7;
+            const { data: subData, error: subErr } = await supabase
+              .from('plan_subscriptions')
+              .insert([
+                {
+                  order_id: orderData.id,
+                  plan_backend_id: String(plan._id || plan.id),
+                  plan_title: plan.title,
+                  billing_period: bp,
+                  total_days: totalDays,
+                },
+              ])
+              .select()
+              .single();
+            if (subErr) {
+              console.error('Plan subscription insert failed:', subErr);
+              continue;
+            }
+            // Pre-create daily delivery rows as 'pending'
+            const deliveries = Array.from({ length: totalDays }, (_, i) => ({
+              subscription_id: subData.id,
+              day_number: i + 1,
+              status: 'pending',
+            }));
+            const { error: delErr } = await supabase
+              .from('plan_deliveries')
+              .insert(deliveries);
+            if (delErr) {
+              console.error('Plan deliveries insert failed:', delErr);
+            }
+          }
+        }
+      } catch (planErr) {
+        console.error('Plan creation error:', planErr);
+        // do not fail the whole checkout on plan creation issues
+      }
+
       setOrderNumber(newOrderNumber);
       setOrderPlaced(true);
       clearCart();
