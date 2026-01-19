@@ -123,7 +123,7 @@ const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
             <div className="flex space-x-3 mb-8">
               {[
                 { icon: Facebook, href: '#' },
-                { icon: Instagram, href: '#' },
+                { icon: Instagram, href: 'https://www.instagram.com/annadata_fruit_bowl?igsh=bGo5N25qNzBpYjBh' },
                 { icon: Twitter, href: '#' },
                 { icon: Youtube, href: '#' },
               ].map((social, index) => (

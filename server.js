@@ -191,6 +191,21 @@ const Plan = mongoose.model('Plan', PlanSchema);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// Payments (user-uploaded payment receipts)
+const PaymentSchema = new mongoose.Schema(
+  {
+    orderNumber: { type: String, required: true },
+    customerName: { type: String },
+    customerPhone: { type: String },
+    amount: { type: Number },
+    method: { type: String, enum: ['qr', 'upi', 'card', 'unknown'], default: 'unknown' },
+    proofUrl: { type: String, required: true },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  },
+  { timestamps: true }
+);
+const Payment = mongoose.model('Payment', PaymentSchema);
+
 // Admin login -> JWT
 app.post('/api/admin/login', async (req, res) => {
   try {
@@ -302,6 +317,43 @@ app.post('/api/blogs', authenticateAdmin, upload.single('media'), async (req, re
 app.delete('/api/blogs/:id', authenticateAdmin, async (req, res) => {
   await Blog.findByIdAndDelete(req.params.id);
   res.json({ success: true });
+});
+
+// User uploads a payment proof (screenshot). No auth required.
+app.post('/api/payments', upload.single('proof'), async (req, res) => {
+  try {
+    const { orderNumber, customerName, customerPhone, amount, method } = req.body;
+    if (!orderNumber) return res.status(400).json({ error: 'orderNumber is required' });
+    if (!req.file?.buffer) return res.status(400).json({ error: 'No proof uploaded' });
+    const uploaded = await uploadToCloudinary(req.file.buffer);
+    const created = await Payment.create({
+      orderNumber,
+      customerName,
+      customerPhone,
+      amount: amount ? Number(amount) : undefined,
+      method: (method || 'unknown').toLowerCase(),
+      proofUrl: uploaded.secure_url,
+      status: 'pending',
+    });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Payment upload failed' });
+  }
+});
+
+// Admin endpoints to view/moderate payments
+app.get('/api/payments', authenticateAdmin, async (req, res) => {
+  const items = await Payment.find().sort({ createdAt: -1 });
+  res.json(items);
+});
+app.patch('/api/payments/:id/approve', authenticateAdmin, async (req, res) => {
+  const updated = await Payment.findByIdAndUpdate(req.params.id, { status: 'approved' }, { new: true });
+  res.json(updated);
+});
+app.patch('/api/payments/:id/reject', authenticateAdmin, async (req, res) => {
+  const updated = await Payment.findByIdAndUpdate(req.params.id, { status: 'rejected' }, { new: true });
+  res.json(updated);
 });
 
 app.post('/api/contact', async (req, res) => {

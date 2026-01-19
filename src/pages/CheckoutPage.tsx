@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   ArrowLeft, User, Phone, Mail, MapPin, Home, CreditCard, 
@@ -14,6 +14,10 @@ const CheckoutPage: React.FC = () => {
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
   const [error, setError] = useState('');
+  const [showPaymentOptions, setShowPaymentOptions] = useState<'none' | 'qr' | 'upi' | 'card'>('none');
+  const [countdown, setCountdown] = useState(0); // seconds for QR timer
+  const [proofUploading, setProofUploading] = useState(false);
+  const [proofMessage, setProofMessage] = useState('');
 
   const [formData, setFormData] = useState({
     name: '',
@@ -36,12 +40,62 @@ const CheckoutPage: React.FC = () => {
     return `AFB-${timestamp}-${random}`;
   };
 
+  // Start/Reset a 10-minute timer (600s)
+  const startQrTimer = () => {
+    setCountdown(600);
+  };
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const t = setInterval(() => setCountdown((c) => c - 1), 1000);
+    return () => clearInterval(t);
+  }, [countdown]);
+
+  const validateForm = () => {
+    if (!formData.name.trim() || !formData.phone.trim() || !formData.address.trim() || !formData.city.trim() || !formData.pincode.trim()) {
+      setError('Please fill in name, phone, address, city and pincode before placing the order.');
+      return false;
+    }
+    return true;
+  };
+
+  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+
+  const uploadPaymentProof = async (method: 'qr' | 'upi' | 'card', file: File) => {
+    try {
+      setProofUploading(true);
+      setProofMessage('Uploading payment screenshot...');
+      const fd = new FormData();
+      // Ensure we have an order number early; if not, generate one to associate
+      const currentOrderNumber = orderNumber || generateOrderNumber();
+      if (!orderNumber) setOrderNumber(currentOrderNumber);
+      fd.append('orderNumber', currentOrderNumber);
+      fd.append('customerName', formData.name);
+      fd.append('customerPhone', formData.phone);
+      fd.append('amount', String(finalTotal));
+      fd.append('method', method);
+      fd.append('proof', file);
+      const res = await fetch(`${API_URL}/api/payments`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('Upload failed');
+      setProofMessage('Payment is verifying. Once confirmed, we will inform you. Thank you!');
+    } catch (e) {
+      setProofMessage('Upload failed. Please try again.');
+    } finally {
+      setProofUploading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
-    const newOrderNumber = generateOrderNumber();
+    if (!validateForm()) {
+      setLoading(false);
+      return;
+    }
+
+    const newOrderNumber = orderNumber || generateOrderNumber();
 
     try {
       // Create order
@@ -365,6 +419,84 @@ const CheckoutPage: React.FC = () => {
                       <p className="text-sm text-gray-500">Pay when you receive your order</p>
                     </div>
                   </label>
+                  <label className={`flex items-center space-x-3 p-4 border-2 rounded-xl cursor-pointer ${formData.paymentMethod === 'online' ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
+                    <input
+                      type="radio"
+                      name="payment"
+                      value="online"
+                      checked={formData.paymentMethod === 'online'}
+                      onChange={(e) => { setFormData({ ...formData, paymentMethod: e.target.value }); setShowPaymentOptions('none'); }}
+                      className="w-5 h-5 text-green-600"
+                    />
+                    <div>
+                      <p className="font-medium text-gray-900">Pay Online</p>
+                      <p className="text-sm text-gray-500">UPI / QR Code / Cards</p>
+                    </div>
+                  </label>
+                  {formData.paymentMethod === 'online' && (
+                    <div className="mt-2 p-4 border rounded-xl space-y-3">
+                      {showPaymentOptions === 'none' && (
+                        <div className="grid sm:grid-cols-3 gap-3">
+                          <button type="button" onClick={() => { setShowPaymentOptions('qr'); startQrTimer(); }} className="px-3 py-2 bg-white border rounded hover:bg-gray-50">QR Code</button>
+                          <button type="button" onClick={() => { setShowPaymentOptions('upi'); setCountdown(0); }} className="px-3 py-2 bg-white border rounded hover:bg-gray-50">UPI</button>
+                          <button type="button" onClick={() => { setShowPaymentOptions('card'); setCountdown(0); }} className="px-3 py-2 bg-white border rounded hover:bg-gray-50">Cards</button>
+                        </div>
+                      )}
+
+                      {showPaymentOptions !== 'none' && (
+                        <button type="button" onClick={() => { setShowPaymentOptions('none'); setCountdown(0); }} className="text-sm text-gray-600 underline">Back</button>
+                      )}
+
+                      {showPaymentOptions === 'qr' && (
+                        <div className="space-y-3">
+                          <img src="/qrcode.jpg" alt="QR Code" className="w-48 h-48 object-contain mx-auto" />
+                          {countdown > 0 ? (
+                            <p className="text-center text-sm text-gray-600">QR valid for {Math.floor(countdown/60)}:{String(countdown%60).padStart(2,'0')}</p>
+                          ) : (
+                            <div className="text-center space-y-2">
+                              <p className="text-sm text-gray-600">Timer finished.</p>
+                              <button type="button" onClick={() => startQrTimer()} className="px-3 py-2 bg-white border rounded hover:bg-gray-50">Reload QR</button>
+                            </div>
+                          )}
+                          <div className="text-center">
+                            <label className="inline-flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded cursor-pointer">
+                              {proofUploading ? 'Uploading...' : 'If paid, click here to upload screenshot'}
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPaymentProof('qr', f); }} />
+                            </label>
+                          </div>
+                          {proofMessage && <p className="text-center text-sm text-gray-700">{proofMessage}</p>}
+                        </div>
+                      )}
+
+                      {showPaymentOptions === 'upi' && (
+                        <div className="space-y-3 text-center">
+                          <p className="text-sm text-gray-700">Pay via PhonePe UPI (auto amount)</p>
+                          <a
+                            href={`upi://pay?pa=shannu33@ybl&pn=Annadata%20Fruits&am=${encodeURIComponent(finalTotal.toFixed(2))}&cu=INR&tn=${encodeURIComponent('Order '+(orderNumber||''))}`}
+                            className="inline-block px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                          >Pay with UPI</a>
+                          <div>
+                            <label className="inline-flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded cursor-pointer">
+                              {proofUploading ? 'Uploading...' : 'Upload payment screenshot'}
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPaymentProof('upi', f); }} />
+                            </label>
+                          </div>
+                          {proofMessage && <p className="text-center text-sm text-gray-700">{proofMessage}</p>}
+                        </div>
+                      )}
+
+                      {showPaymentOptions === 'card' && (
+                        <div className="space-y-3">
+                          <div className="grid sm:grid-cols-3 gap-3">
+                            <input placeholder="Card Number" className="px-3 py-2 border rounded" />
+                            <input placeholder="MM/YY" className="px-3 py-2 border rounded" />
+                            <input placeholder="CVV" className="px-3 py-2 border rounded" />
+                          </div>
+                          <p className="text-sm text-gray-500">This feature coming soon.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

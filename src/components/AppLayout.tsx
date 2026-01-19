@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import Navbar from './Navbar';
 import Footer from './Footer';
@@ -21,7 +21,7 @@ import NotFound from '@/pages/NotFound';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { CartProvider } from '@/contexts/CartContext';
 import DeveloperInfoModal from './DeveloperInfoModal';
-import { useEffect } from 'react';
+ 
 
 const AppLayout: React.FC = () => {
   const [showCallback, setShowCallback] = useState(false);
@@ -29,6 +29,8 @@ const AppLayout: React.FC = () => {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
   const isCheckoutRoute = location.pathname === '/checkout';
+  const tapCountRef = useRef(0);
+  const tapTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -40,6 +42,38 @@ const AppLayout: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // Global 4-tap anywhere to open developer info (mobile-friendly)
+  useEffect(() => {
+    const handleTouchEnd = () => {
+      tapCountRef.current += 1;
+      if (tapTimerRef.current) {
+        window.clearTimeout(tapTimerRef.current);
+      }
+      tapTimerRef.current = window.setTimeout(() => {
+        tapCountRef.current = 0;
+        tapTimerRef.current = null;
+      }, 1200);
+
+      if (tapCountRef.current >= 4) {
+        tapCountRef.current = 0;
+        if (tapTimerRef.current) {
+          window.clearTimeout(tapTimerRef.current);
+          tapTimerRef.current = null;
+        }
+        setShowDevInfo(true);
+      }
+    };
+
+    window.addEventListener('touchend', handleTouchEnd, { passive: true } as AddEventListenerOptions);
+    return () => {
+      window.removeEventListener('touchend', handleTouchEnd as any);
+      if (tapTimerRef.current) {
+        window.clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = null;
+      }
+    };
   }, []);
 
   return (

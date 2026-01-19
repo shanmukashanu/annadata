@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Leaf, LogOut, Package, Star, MessageSquare, Phone, Mail, Users, 
   FileText, Award, Plus, Trash2, Edit, X, Save, Loader2, Menu,
-  ShoppingCart, Clock, CheckCircle, Truck
+  ShoppingCart, Clock, CheckCircle, Truck, CreditCard
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
-type TabType = 'orders' | 'products' | 'reviews' | 'blogs' | 'floating' | 'contacts' | 'callbacks' | 'enquiries' | 'farmers' | 'subscribers' | 'plans' | 'newsletter' | 'participants';
+type TabType = 'orders' | 'products' | 'reviews' | 'blogs' | 'floating' | 'contacts' | 'callbacks' | 'enquiries' | 'farmers' | 'subscribers' | 'plans' | 'newsletter' | 'participants' | 'payments';
 
 const AdminPage: React.FC = () => {
   const { isAdmin, logout, adminEmail, token } = useAuth();
@@ -57,6 +57,7 @@ const AdminPage: React.FC = () => {
       plans: 'plans',
       newsletter: 'subscribers',
       participants: 'participants',
+      payments: 'payments',
     };
     return tables[activeTab];
   };
@@ -113,7 +114,7 @@ const AdminPage: React.FC = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    const backendTabs: TabType[] = ['plans', 'newsletter', 'participants', 'products', 'reviews', 'blogs', 'farmers', 'subscribers'];
+    const backendTabs: TabType[] = ['plans', 'newsletter', 'participants', 'products', 'reviews', 'blogs', 'farmers', 'subscribers', 'payments'];
     if (backendTabs.includes(activeTab)) {
       const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
       const endpoint =
@@ -366,6 +367,7 @@ const AdminPage: React.FC = () => {
     { id: 'plans', label: 'Plans', icon: Award },
     { id: 'newsletter', label: 'Newsletter', icon: Mail },
     { id: 'participants', label: 'Participants', icon: Users },
+    { id: 'payments', label: 'Payments', icon: CreditCard },
   ];
 
   const orderStatuses = [
@@ -375,6 +377,7 @@ const AdminPage: React.FC = () => {
     { value: 'delivered', label: 'Delivered', color: 'green', icon: CheckCircle },
     { value: 'rejected', label: 'Rejected', color: 'red', icon: X },
     { value: 'out_of_stock', label: 'Out of Stock', color: 'orange', icon: Package },
+    { value: 'paid', label: 'Paid', color: 'green', icon: CheckCircle },
   ];
 
   const getStatusBadge = (status: string) => {
@@ -880,6 +883,72 @@ const AdminPage: React.FC = () => {
   const renderTable = () => {
     if (activeTab === 'orders') {
       return renderOrdersTable();
+    }
+
+    if (activeTab === 'payments') {
+      if (loading) {
+        return (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+          </div>
+        );
+      }
+      const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+      const approve = async (id: string, orderNumber: string) => {
+        await fetch(`${API_URL}/api/payments/${id}/approve`, { method: 'PATCH', headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+        // Also set the related order to paid
+        await supabase.from('orders').update({ status: 'paid' }).eq('order_number', orderNumber);
+        fetchData();
+      };
+      const reject = async (id: string) => {
+        await fetch(`${API_URL}/api/payments/${id}/reject`, { method: 'PATCH', headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+        fetchData();
+      };
+
+      if (data.length === 0) {
+        return <div className="text-center py-20 text-gray-500">No payments found.</div>;
+      }
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proof</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {data.map((p: any) => (
+                <tr key={p.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-4 text-sm font-medium text-green-600">{p.orderNumber}</td>
+                  <td className="px-4 py-4 text-sm">{p.customerName || '-'}</td>
+                  <td className="px-4 py-4 text-sm">{p.customerPhone || '-'}</td>
+                  <td className="px-4 py-4 text-sm">{p.amount ? `₹${Number(p.amount).toFixed(2)}` : '-'}</td>
+                  <td className="px-4 py-4 text-sm capitalize">{p.method || '-'}</td>
+                  <td className="px-4 py-4 text-sm capitalize">{p.status}</td>
+                  <td className="px-4 py-4 text-sm">
+                    {p.proofUrl ? (
+                      <a href={p.proofUrl} target="_blank" rel="noreferrer">
+                        <img src={p.proofUrl} alt="proof" className="h-12 w-12 object-cover rounded" />
+                      </a>
+                    ) : '-'}
+                  </td>
+                  <td className="px-4 py-4 text-right space-x-2">
+                    <button onClick={() => approve(p.id, p.orderNumber)} className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200" disabled={p.status === 'approved'}>Approve</button>
+                    <button onClick={() => reject(p.id)} className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200" disabled={p.status === 'rejected'}>Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
     }
 
     if (loading) {
