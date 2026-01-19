@@ -41,7 +41,7 @@ const DeveloperInfoModal: React.FC<DeveloperInfoModalProps> = ({ isOpen, onClose
               <a href="https://eshanmuka.onrender.com" target="_blank" rel="noreferrer" className="text-green-700 font-medium hover:underline">eshanmuka.onrender.com</a>
             </div>
           </div>
-          <p className="text-xs text-gray-500 mt-4">Tip: Press Ctrl + M to open this dialog. On mobile, tap the footer area 4 times.</p>
+          <p className="text-xs text-gray-500 mt-4">Contact me for any feedback or support</p>
         </div>
       </div>
     </div>

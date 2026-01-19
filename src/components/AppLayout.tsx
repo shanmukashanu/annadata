@@ -29,8 +29,8 @@ const AppLayout: React.FC = () => {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
   const isCheckoutRoute = location.pathname === '/checkout';
-  const tapCountRef = useRef(0);
-  const tapTimerRef = useRef<number | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressActiveRef = useRef(false);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -44,34 +44,41 @@ const AppLayout: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Global 4-tap anywhere to open developer info (mobile-friendly)
+  // Global long-press (10 seconds) anywhere to open developer info (mobile)
   useEffect(() => {
-    const handleTouchEnd = () => {
-      tapCountRef.current += 1;
-      if (tapTimerRef.current) {
-        window.clearTimeout(tapTimerRef.current);
+    const startLongPress = () => {
+      if (longPressTimerRef.current) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
       }
-      tapTimerRef.current = window.setTimeout(() => {
-        tapCountRef.current = 0;
-        tapTimerRef.current = null;
-      }, 1200);
-
-      if (tapCountRef.current >= 4) {
-        tapCountRef.current = 0;
-        if (tapTimerRef.current) {
-          window.clearTimeout(tapTimerRef.current);
-          tapTimerRef.current = null;
+      longPressActiveRef.current = true;
+      longPressTimerRef.current = window.setTimeout(() => {
+        if (longPressActiveRef.current) {
+          setShowDevInfo(true);
         }
-        setShowDevInfo(true);
+      }, 10000);
+    };
+    const cancelLongPress = () => {
+      longPressActiveRef.current = false;
+      if (longPressTimerRef.current) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
       }
     };
 
-    window.addEventListener('touchend', handleTouchEnd, { passive: true } as AddEventListenerOptions);
+    window.addEventListener('touchstart', startLongPress, { passive: true } as AddEventListenerOptions);
+    window.addEventListener('touchend', cancelLongPress, { passive: true } as AddEventListenerOptions);
+    window.addEventListener('touchcancel', cancelLongPress, { passive: true } as AddEventListenerOptions);
+    window.addEventListener('touchmove', cancelLongPress, { passive: true } as AddEventListenerOptions);
+
     return () => {
-      window.removeEventListener('touchend', handleTouchEnd as any);
-      if (tapTimerRef.current) {
-        window.clearTimeout(tapTimerRef.current);
-        tapTimerRef.current = null;
+      window.removeEventListener('touchstart', startLongPress as any);
+      window.removeEventListener('touchend', cancelLongPress as any);
+      window.removeEventListener('touchcancel', cancelLongPress as any);
+      window.removeEventListener('touchmove', cancelLongPress as any);
+      if (longPressTimerRef.current) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
       }
     };
   }, []);
