@@ -43,8 +43,8 @@ const ContactPage: React.FC = () => {
     {
       icon: Phone,
       title: 'Phone',
-      content: '+91-9550134571',
-      href: 'tel:+919550134571',
+      content: '+91-6363871946',
+      href: 'tel:+916363871946',
       color: 'orange',
     },
     {
@@ -230,7 +230,7 @@ const ContactPage: React.FC = () => {
                 </p>
                 <div className="space-y-4">
                   <a
-                    href="https://wa.me/919550134571"
+                    href="https://wa.me/916363871946"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center space-x-3 bg-white/20 hover:bg-white/30 px-4 py-3 rounded-xl transition-colors"
@@ -241,11 +241,11 @@ const ContactPage: React.FC = () => {
                     <span>Chat on WhatsApp</span>
                   </a>
                   <a
-                    href="tel:+919550134571"
+                    href="tel:+916363871946"
                     className="flex items-center space-x-3 bg-white/20 hover:bg-white/30 px-4 py-3 rounded-xl transition-colors"
                   >
                     <Phone className="h-6 w-6" />
-                    <span>Call +91-9550134571</span>
+                    <span>Call +91-6363871946</span>
                   </a>
                 </div>
               </div>

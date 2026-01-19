@@ -326,14 +326,14 @@ const OrderTrackingPage: React.FC = () => {
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <a
-                  href="tel:+919550134571"
+                  href="tel:+916363871946"
                   className="flex items-center space-x-2 text-green-600 font-medium hover:text-green-700"
                 >
                   <Phone className="h-5 w-5" />
-                  <span>+91-9550134571</span>
+                  <span>+91-6363871946</span>
                 </a>
                 <a
-                  href="https://wa.me/919550134571"
+                  href="https://wa.me/916363871946"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"

@@ -41,7 +41,7 @@ const HomePage: React.FC = () => {
   const [enquiryPlan, setEnquiryPlan] = useState<string | null>(null);
   const [addedToCart, setAddedToCart] = useState<Record<string, boolean>>({});
   const { addToCart } = useCart();
-  const whatsappNumber = '919550134571';
+  const whatsappNumber = '916363871946';
 
   useEffect(() => {
     fetchData();

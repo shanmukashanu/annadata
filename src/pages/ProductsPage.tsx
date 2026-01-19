@@ -39,7 +39,7 @@ const ProductsPage: React.FC = () => {
 
   const { addToCart } = useCart();
   const categories = ['All', 'Regular', 'Seasonal', 'Plans'];
-  const whatsappNumber = '919550134571';
+  const whatsappNumber = '916363871946';
 
   useEffect(() => {
     fetchProducts();

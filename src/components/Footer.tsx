@@ -98,11 +98,11 @@ const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
               </li>
               <li>
                 <a
-                  href="tel:+919550134571"
+                  href="tel:+916363871946"
                   className="flex items-center space-x-3 text-green-200 hover:text-white transition-colors"
                 >
                   <Phone className="h-5 w-5 text-orange-400" />
-                  <span>+91-9550134571</span>
+                  <span>+91-6363871946</span>
                 </a>
               </li>
               <li>
