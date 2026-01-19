@@ -1,5 +1,5 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Leaf, Users, Award, Heart, Target, Eye, ArrowRight, Shield } from 'lucide-react';
 
 const AboutPage: React.FC = () => {
@@ -9,6 +9,8 @@ const AboutPage: React.FC = () => {
     { number: '5000+', label: 'Happy Customers' },
     { number: '50+', label: 'Fruit Varieties' },
   ];
+
+// (state and handlers will be defined inside AboutPage)
 
   const values = [
     {
@@ -35,13 +37,13 @@ const AboutPage: React.FC = () => {
 
   const team = [
     {
-      name: 'Shanmukha',
+      name: 'Madhu',
       role: 'Founder & CEO',
-      image: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=300',
+      image: 'ceo.jpg',
       description: 'Passionate about connecting farmers with consumers.',
     },
     {
-      name: 'Madhu',
+      name: 'Bindu',
       role: 'Operations Head',
       image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300',
       description: 'Ensures smooth delivery and quality control.',
@@ -53,6 +55,25 @@ const AboutPage: React.FC = () => {
       description: 'Works directly with our partner farmers.',
     },
   ];
+
+  const navigate = useNavigate();
+  const [showSecret, setShowSecret] = useState(false);
+  const [secretInput, setSecretInput] = useState('');
+  const onSecretChange = (v: string) => {
+    const val = (v || '').slice(0, 2).toLowerCase();
+    setSecretInput(val);
+    if (val.length === 2 && val !== 'hi') {
+      setShowSecret(false);
+      setSecretInput('');
+    }
+  };
+  const onSecretOk = () => {
+    if (secretInput === 'hi') {
+      setShowSecret(false);
+      setSecretInput('');
+      navigate('/admin-login');
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -189,6 +210,16 @@ const AboutPage: React.FC = () => {
               </div>
             ))}
           </div>
+          {/* Secret icon (mobile & desktop) */}
+          <div className="mt-8 flex items-center justify-center">
+            <button
+              aria-label="Values Secret"
+              onClick={() => setShowSecret(true)}
+              className="p-3 rounded-full bg-green-600 text-white shadow-lg active:scale-95"
+            >
+              <Heart className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </section>
 
@@ -243,6 +274,37 @@ const AboutPage: React.FC = () => {
           </Link>
         </div>
       </section>
+      {/* Secret modal */}
+      {showSecret && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => { setShowSecret(false); setSecretInput(''); }}
+          />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-xs p-5">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">Enter Code</h3>
+            <input
+              value={secretInput}
+              onChange={(e) => onSecretChange(e.target.value)}
+              maxLength={2}
+              inputMode="text"
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
+              placeholder="__"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setShowSecret(false); setSecretInput(''); }}
+                className="px-3 py-2 rounded-lg border hover:bg-gray-50"
+              >Cancel</button>
+              <button
+                onClick={onSecretOk}
+                disabled={secretInput !== 'hi'}
+                className={`px-3 py-2 rounded-lg text-white ${secretInput === 'hi' ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed'}`}
+              >OK</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

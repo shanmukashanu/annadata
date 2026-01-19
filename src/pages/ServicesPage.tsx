@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Truck, Leaf, Shield, Package, Clock, Users, Building2, Gift, ArrowRight, CheckCircle } from 'lucide-react';
 
@@ -83,6 +83,74 @@ const ServicesPage: React.FC = () => {
               the freshest fruits with utmost convenience.
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* Highlights Carousel (below hero) */}
+      <section className="bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+          {(() => {
+            const slides = [
+              { src: '/fruitstall.jpg', title: 'Fresh Fruit Stall', subtitle: 'Handpicked selection straight from trusted farms' },
+              { src: '/bowl.jpg', title: 'Careful Packing', subtitle: 'Eco-friendly packaging that protects freshness' },
+              { src: '/fruitstall2.jpg', title: 'Wide Variety', subtitle: 'Seasonal and exotic fruits available daily' },
+              { src: '/features.jpg', title: 'Quality You Can Trust', subtitle: 'FSSAI-compliant processes and inspections' },
+            ];
+            const [index, setIndex] = useState(0);
+            useEffect(() => {
+              const id = setInterval(() => setIndex((i) => (i + 1) % slides.length), 3000);
+              return () => clearInterval(id);
+            }, []);
+            const go = (dir: number) => setIndex((i) => (i + dir + slides.length) % slides.length);
+            return (
+              <div className="relative rounded-3xl overflow-hidden shadow-lg">
+                <div className="relative h-80 sm:h-96 md:h-[28rem]">
+                  {slides.map((s, i) => (
+                    <div
+                      key={s.src}
+                      className={`absolute inset-0 transition-opacity duration-700 ${i === index ? 'opacity-100' : 'opacity-0'}`}
+                    >
+                      {/* Blurred background to avoid visible side blanks */}
+                      <img
+                        src={s.src}
+                        alt=""
+                        aria-hidden
+                        className="absolute inset-0 w-full h-full object-cover blur-xl scale-110"
+                        loading={i === 0 ? 'eager' : 'lazy'}
+                      />
+                      <div className="absolute inset-0 bg-black/30" />
+                      {/* Foreground image fully visible without cropping */}
+                      <img
+                        src={s.src}
+                        alt={s.title}
+                        className="absolute inset-0 w-full h-full object-contain"
+                        loading={i === 0 ? 'eager' : 'lazy'}
+                      />
+                    </div>
+                  ))}
+                  {/* Overlay content */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
+                    <h3 className="text-white text-2xl md:text-3xl font-bold drop-shadow">{slides[index].title}</h3>
+                    <p className="text-white/90 text-sm md:text-base mt-2 max-w-2xl drop-shadow">{slides[index].subtitle}</p>
+                  </div>
+                  {/* Controls */}
+                  <button aria-label="Previous" onClick={() => go(-1)} className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white text-gray-800 rounded-full p-2 shadow">‹</button>
+                  <button aria-label="Next" onClick={() => go(1)} className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white text-gray-800 rounded-full p-2 shadow">›</button>
+                  {/* Dots */}
+                  <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-2">
+                    {slides.map((_, i) => (
+                      <button
+                        key={i}
+                        aria-label={`Go to slide ${i + 1}`}
+                        onClick={() => setIndex(i)}
+                        className={`w-2.5 h-2.5 rounded-full ${i === index ? 'bg-white' : 'bg-white/60'} hover:bg-white`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </section>
 

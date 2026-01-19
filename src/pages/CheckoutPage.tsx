@@ -640,12 +640,7 @@ const CheckoutPage: React.FC = () => {
                 />
               </div>
 
-              {error && (
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center space-x-3">
-                  <AlertCircle className="h-5 w-5 text-red-500" />
-                  <p className="text-red-700">{error}</p>
-                </div>
-              )}
+              {/* Error modal rendered globally below */}
 
               {/* Mobile Submit Button */}
               <div className="lg:hidden">
@@ -726,6 +721,19 @@ const CheckoutPage: React.FC = () => {
             <div className="mx-auto mb-4 w-16 h-16 rounded-full border-4 border-green-2 00 border-t-green-600 animate-spin" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Verifying Payment</h3>
             <p className="text-gray-600">Once verified we will inform shortly. Thank you!</p>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setError('')} />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+            <div className="mx-auto mb-4 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+              <AlertCircle className="h-6 w-6 text-red-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Action Required</h3>
+            <p className="text-gray-700 mb-4">{error}</p>
+            <button onClick={() => setError('')} className="inline-flex px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">Close</button>
           </div>
         </div>
       )}
