@@ -46,20 +46,39 @@ const OrderTrackingPage: React.FC = () => {
 
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!orderNumber.trim()) return;
+    const val = orderNumber.trim();
+    if (!val) return;
 
     setLoading(true);
     setError('');
     setSearched(true);
 
-    const { data: orderData, error: orderError } = await supabase
+    // Attempt by order number first
+    let orderData: any = null;
+    let orderError: any = null;
+    const byNumber = await supabase
       .from('orders')
       .select('*')
-      .eq('order_number', orderNumber.trim().toUpperCase())
+      .eq('order_number', val.toUpperCase())
       .single();
+    orderData = byNumber.data;
+    orderError = byNumber.error;
+
+    // Fallback: try exact phone match, pick latest if multiple
+    if (orderError || !orderData) {
+      const byPhone = await supabase
+        .from('orders')
+        .select('*')
+        .eq('customer_phone', val)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      orderData = byPhone.data;
+      orderError = byPhone.error;
+    }
 
     if (orderError || !orderData) {
-      setError('Order not found. Please check your order number.');
+      setError('Order not found. Please check your order number or phone.');
       setOrder(null);
       setOrderItems([]);
       setLoading(false);

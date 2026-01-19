@@ -68,10 +68,14 @@ const CheckoutPage: React.FC = () => {
 
       if (orderError) throw orderError;
 
+      // Helper: basic UUID check to avoid inserting non-UUIDs into uuid column
+      const isUuid = (v: any) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+
       // Create order items
       const orderItems = items.map((item) => ({
         order_id: orderData.id,
-        product_id: item.id,
+        // If DB column is UUID, passing a non-UUID (e.g., Mongo/ObjectId or plan_*) will 22P02. Send null in that case.
+        product_id: isUuid(item.id) ? item.id : null,
         product_name: item.name,
         product_price: item.price,
         quantity: item.quantity,

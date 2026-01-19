@@ -26,6 +26,11 @@ const AdminPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [planSubs, setPlanSubs] = useState<any[]>([]);
   const [planDeliveries, setPlanDeliveries] = useState<Record<string, any[]>>({});
+  const [visibleDaysBySub, setVisibleDaysBySub] = useState<Record<string, number>>({});
+  const [ordersWithPlans, setOrdersWithPlans] = useState<Record<string, boolean>>({});
+  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'total_desc' | 'total_asc'>('date_desc');
+  const [showOnly, setShowOnly] = useState<'all' | 'products' | 'plans'>('all');
+  const [expandedSubs, setExpandedSubs] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!isAdmin) {
@@ -54,6 +59,56 @@ const AdminPage: React.FC = () => {
       participants: 'participants',
     };
     return tables[activeTab];
+  };
+
+  const extendSubscriptionDays = async (subscriptionId: string, currentTotal: number, addDays: number) => {
+    const toAdd = Number(addDays);
+    if (!toAdd || toAdd <= 0) return;
+    // Update total_days
+    const newTotal = currentTotal + toAdd;
+    await supabase
+      .from('plan_subscriptions')
+      .update({ total_days: newTotal })
+      .eq('id', subscriptionId);
+    // Insert new pending deliveries for the extended range
+    const deliveries = Array.from({ length: toAdd }, (_, i) => ({
+      subscription_id: subscriptionId,
+      day_number: currentTotal + i + 1,
+      status: 'pending',
+    }));
+    await supabase
+      .from('plan_deliveries')
+      .insert(deliveries);
+    // Refresh local state
+    setPlanSubs((prev) => prev.map((s) => s.id === subscriptionId ? { ...s, total_days: newTotal } : s));
+    setPlanDeliveries((prev) => ({
+      ...prev,
+      [subscriptionId]: [ ...(prev[subscriptionId] || []), ...deliveries.map((d, idx) => ({ id: `temp-${Date.now()}-${idx}`, ...d })) ],
+    }));
+  };
+
+  const bulkUpdateDeliveryStatus = async (subscriptionId: string, status: string, scope: 'pending' | 'all') => {
+    // Update rows in DB
+    let query = supabase
+      .from('plan_deliveries')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('subscription_id', subscriptionId);
+    if (scope === 'pending') query = query.eq('status', 'pending');
+    await query;
+    // Recompute delivered_count
+    const { data: dels } = await supabase
+      .from('plan_deliveries')
+      .select('day_number,status')
+      .eq('subscription_id', subscriptionId)
+      .order('day_number', { ascending: true });
+    const deliveredCount = (dels || []).filter((d) => d.status === 'delivered').length;
+    await supabase
+      .from('plan_subscriptions')
+      .update({ delivered_count: deliveredCount })
+      .eq('id', subscriptionId);
+    // Update local state
+    setPlanDeliveries((prev) => ({ ...prev, [subscriptionId]: dels || [] }));
+    setPlanSubs((prev) => prev.map((s) => s.id === subscriptionId ? { ...s, delivered_count: deliveredCount } : s));
   };
 
   const fetchData = async () => {
@@ -93,6 +148,31 @@ const AdminPage: React.FC = () => {
           map[it.order_id].push(it);
         });
         setOrderItemsByOrder(map);
+
+        // Determine which orders have plan subscriptions
+        const { data: subsData } = await supabase
+          .from('plan_subscriptions')
+          .select('order_id')
+          .in('order_id', orderIds);
+        const planMap: Record<string, boolean> = {};
+        (subsData || []).forEach((s: any) => { planMap[s.order_id] = true; });
+
+        // Fallback: infer plans by matching item names to backend plan titles (in case subs table not populated yet)
+        try {
+          const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+          const plansRes = await fetch(`${API_URL}/api/plans`);
+          const plansJson: any[] = await plansRes.json();
+          const planTitles = new Set((plansJson || []).map((p: any) => String(p.title || '').trim().toLowerCase()));
+          rows.forEach((r: any) => {
+            const items = map[r.id] || [];
+            const hasPlanByTitle = items.some((it) => planTitles.has(String(it.product_name || '').trim().toLowerCase()));
+            if (hasPlanByTitle) planMap[r.id] = true;
+          });
+        } catch (e) {
+          // ignore backend fetch errors; rely on subs data
+        }
+
+        setOrdersWithPlans(planMap);
       }
     }
     setLoading(false);
@@ -241,6 +321,14 @@ const AdminPage: React.FC = () => {
       deliveriesMap[sub.id] = dels || [];
     }
     setPlanDeliveries(deliveriesMap);
+    // initialize visible days (show 10 initially per subscription)
+    const vis: Record<string, number> = {};
+    (subs || []).forEach((s: any) => { vis[s.id] = 10; });
+    setVisibleDaysBySub(vis);
+    // collapse by default; admin can expand with 'Detailed view'
+    const exp: Record<string, boolean> = {};
+    (subs || []).forEach((s: any) => { exp[s.id] = false; });
+    setExpandedSubs(exp);
   };
 
   const updateDeliveryStatus = async (subscriptionId: string, dayNumber: number, newStatus: string) => {
@@ -327,25 +415,73 @@ const AdminPage: React.FC = () => {
       return items.some((it) => String(it.product_name || '').toLowerCase().includes(term));
     });
 
-    if (filtered.length === 0) {
-      return (
-        <div className="text-center py-20 text-gray-500">
-          No orders found.
-        </div>
-      );
-    }
+    // Apply showOnly filter (plans/products)
+    const filteredByType = filtered.filter((order) => {
+      if (showOnly === 'all') return true;
+      const hasPlan = !!ordersWithPlans[order.id];
+      return showOnly === 'plans' ? hasPlan : !hasPlan;
+    });
+
+    // Apply sorting
+    const sorted = [...filteredByType].sort((a: any, b: any) => {
+      if (sortBy === 'date_desc') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (sortBy === 'date_asc') return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      if (sortBy === 'total_desc') return Number(b.total) - Number(a.total);
+      if (sortBy === 'total_asc') return Number(a.total) - Number(b.total);
+      return 0;
+    });
 
     return (
       <div className="overflow-x-auto">
-        <div className="p-4 flex items-center justify-between">
-          <input
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by name, phone, order #, product/plan..."
-            className="w-full md:w-1/2 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
-          />
+        <div className="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex items-center gap-2 w-full md:w-1/2">
+            <input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by name, phone, order #, product/plan..."
+              className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
+            />
+            {searchTerm && (
+              <button onClick={() => { setSearchTerm(''); setShowOnly('all'); }} className="px-3 py-2 border rounded-lg hover:bg-gray-50">Clear</button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg overflow-hidden border">
+              <button
+                className={`px-3 py-2 ${showOnly === 'all' ? 'bg-green-600 text-white' : 'bg-white'}`}
+                onClick={() => setShowOnly('all')}
+              >All</button>
+              <button
+                className={`px-3 py-2 ${showOnly === 'products' ? 'bg-green-600 text-white' : 'bg-white'}`}
+                onClick={() => setShowOnly('products')}
+              >Products</button>
+              <button
+                className={`px-3 py-2 ${showOnly === 'plans' ? 'bg-green-600 text-white' : 'bg-white'}`}
+                onClick={() => setShowOnly('plans')}
+              >Plans</button>
+            </div>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="px-3 py-2 border rounded-lg bg-white"
+            >
+              <option value="date_desc">Newest</option>
+              <option value="date_asc">Oldest</option>
+              <option value="total_desc">Total: High → Low</option>
+              <option value="total_asc">Total: Low → High</option>
+            </select>
+            <button
+              onClick={() => { setSearchTerm(''); setShowOnly('all'); setSortBy('date_desc'); }}
+              className="px-3 py-2 border rounded-lg hover:bg-gray-50"
+            >Reset Filters</button>
+          </div>
         </div>
-        <table className="w-full">
+        {sorted.length === 0 ? (
+          <div className="text-center py-20 text-gray-500">
+            No orders found.
+          </div>
+        ) : (
+          <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
@@ -357,7 +493,7 @@ const AdminPage: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {filtered.map((order) => (
+            {sorted.map((order) => (
               <tr key={order.id} className="hover:bg-gray-50">
                 <td className="px-4 py-4 text-sm font-medium text-green-600">{order.order_number}</td>
                 <td className="px-4 py-4 text-sm">
@@ -394,7 +530,8 @@ const AdminPage: React.FC = () => {
               </div>
             )}
           </tbody>
-        </table>
+          </table>
+        )}
       </div>
     );
   };
@@ -490,9 +627,65 @@ const AdminPage: React.FC = () => {
                           <p className="font-semibold text-gray-900">{sub.plan_title}</p>
                           <p className="text-sm text-gray-600">{sub.billing_period} • {sub.delivered_count}/{sub.total_days} delivered</p>
                         </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="Add days"
+                              className="w-24 px-2 py-1 border rounded"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const val = Number((e.target as HTMLInputElement).value);
+                                  extendSubscriptionDays(sub.id, sub.total_days, val);
+                                  (e.target as HTMLInputElement).value = '';
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const inp = (document.activeElement as HTMLInputElement);
+                                const val = Number(inp?.value || '');
+                                extendSubscriptionDays(sub.id, sub.total_days, val);
+                                if (inp) inp.value = '';
+                              }}
+                              className="px-3 py-1 bg-white border rounded hover:bg-gray-50"
+                            >Extend</button>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <select id={`bulk-status-${sub.id}`} className="px-2 py-1 border rounded">
+                              <option value="pending">pending</option>
+                              <option value="shipped">shipped</option>
+                              <option value="out_for_delivery">out_for_delivery</option>
+                              <option value="delivered">delivered</option>
+                              <option value="rejected">rejected</option>
+                            </select>
+                            <button
+                              onClick={() => {
+                                const sel = document.getElementById(`bulk-status-${sub.id}`) as HTMLSelectElement;
+                                bulkUpdateDeliveryStatus(sub.id, sel.value, 'pending');
+                              }}
+                              className="px-3 py-1 bg-white border rounded hover:bg-gray-50"
+                            >Apply to pending</button>
+                            <button
+                              onClick={() => {
+                                const sel = document.getElementById(`bulk-status-${sub.id}`) as HTMLSelectElement;
+                                bulkUpdateDeliveryStatus(sub.id, sel.value, 'all');
+                              }}
+                              className="px-3 py-1 bg-white border rounded hover:bg-gray-50"
+                            >Apply to all</button>
+                          </div>
+                        </div>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setExpandedSubs((prev) => ({ ...prev, [sub.id]: !prev[sub.id] }))}
+                          className="px-3 py-1 bg-white border rounded hover:bg-gray-50"
+                        >{expandedSubs[sub.id] ? 'Hide details' : 'Detailed view'}</button>
+                      </div>
+                      {expandedSubs[sub.id] && (
                       <div className="mt-3 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                        {(planDeliveries[sub.id] || []).map((d) => (
+                        {(planDeliveries[sub.id] || []).slice(0, visibleDaysBySub[sub.id] || 10).map((d) => (
                           <div key={d.day_number} className="bg-white border rounded-lg p-2 text-sm">
                             <div className="flex items-center justify-between mb-1">
                               <span className="font-medium">Day {d.day_number}</span>
@@ -510,7 +703,14 @@ const AdminPage: React.FC = () => {
                             </select>
                           </div>
                         ))}
+                        {((planDeliveries[sub.id] || []).length > (visibleDaysBySub[sub.id] || 10)) && (
+                          <button
+                            onClick={() => setVisibleDaysBySub((prev) => ({ ...prev, [sub.id]: (prev[sub.id] || 10) + 10 }))}
+                            className="col-span-full mt-2 px-3 py-2 bg-white border rounded hover:bg-gray-50"
+                          >View more</button>
+                        )}
                       </div>
+                      )}
                     </div>
                   ))}
                 </div>
