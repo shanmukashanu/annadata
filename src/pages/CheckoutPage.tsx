@@ -19,6 +19,7 @@ const CheckoutPage: React.FC = () => {
   const [proofUploading, setProofUploading] = useState(false);
   const [proofMessage, setProofMessage] = useState('');
   const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [proofUploaded, setProofUploaded] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -171,6 +172,7 @@ const CheckoutPage: React.FC = () => {
         await placeOrderCore(currentOrderNumber);
       }
       setProofMessage('Payment is verifying. Once confirmed, we will inform you. Thank you!');
+      setProofUploaded(true);
       setShowVerifyModal(true);
       setTimeout(() => setShowVerifyModal(false), 3000);
     } catch (e) {
@@ -188,6 +190,25 @@ const CheckoutPage: React.FC = () => {
     if (!validateForm()) {
       setLoading(false);
       return;
+    }
+
+    // If online payment selected, enforce option selection and proof upload
+    if (formData.paymentMethod === 'online') {
+      if (showPaymentOptions === 'none') {
+        setError('Please select a payment option (QR Code / UPI / Cards).');
+        setLoading(false);
+        return;
+      }
+      if (!proofUploaded) {
+        setError('Please upload your payment screenshot to proceed.');
+        setLoading(false);
+        return;
+      }
+      // If proof uploaded, in our flow the order has already been created during upload
+      if (orderPlaced) {
+        setLoading(false);
+        return;
+      }
     }
 
     const newOrderNumber = orderNumber || generateOrderNumber();
@@ -530,7 +551,7 @@ const CheckoutPage: React.FC = () => {
                       name="payment"
                       value="online"
                       checked={formData.paymentMethod === 'online'}
-                      onChange={(e) => { setFormData({ ...formData, paymentMethod: e.target.value }); setShowPaymentOptions('none'); }}
+                      onChange={(e) => { setFormData({ ...formData, paymentMethod: e.target.value }); setShowPaymentOptions('none'); setProofUploaded(false); setProofMessage(''); }}
                       className="w-5 h-5 text-green-600"
                     />
                     <div>
