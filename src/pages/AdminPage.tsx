@@ -1068,7 +1068,7 @@ const AdminPage: React.FC = () => {
             ))}
           </nav>
         </div>
-        <div className="absolute bottom-0 left-0 right-0 p-6">
+        <div className="absolute bottom-0 left-0 right-0 p-6 hidden lg:block">
           <button
             onClick={() => { logout(); navigate('/'); }}
             className="w-full flex items-center justify-center space-x-2 bg-red-500 text-white py-3 rounded-lg hover:bg-red-600"
@@ -1093,7 +1093,15 @@ const AdminPage: React.FC = () => {
               <h2 className="text-xl font-semibold text-gray-800 capitalize">{activeTab.replace(/_/g, ' ')}</h2>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-500">{adminEmail}</span>
+              <span className="hidden sm:inline text-sm text-gray-500">{adminEmail}</span>
+              {/* Mobile Logout in header */}
+              <button
+                onClick={() => { logout(); navigate('/'); }}
+                className="lg:hidden inline-flex items-center space-x-2 bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600"
+              >
+                <LogOut className="h-5 w-5" />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
               {!['contacts', 'callbacks', 'enquiries', 'orders', 'newsletter', 'participants'].includes(activeTab) && (
                 <button
                   onClick={() => openForm()}
