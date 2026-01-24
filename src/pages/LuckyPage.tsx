@@ -34,6 +34,7 @@ const LuckyPage: React.FC = () => {
   const [survey, setSurvey] = useState<any>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [surveyMsg, setSurveyMsg] = useState('');
+  const [surveyTitle, setSurveyTitle] = useState<string>('');
 
   useEffect(() => {
     fetchData();
@@ -41,7 +42,6 @@ const LuckyPage: React.FC = () => {
 
   const fetchData = async () => {
     try {
-      const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
       const [farmersRes, subscribersRes] = await Promise.all([
         fetch(`${API_URL}/api/lucky-farmers`),
         fetch(`${API_URL}/api/lucky-subscribers`),
@@ -81,6 +81,23 @@ const LuckyPage: React.FC = () => {
   const [msg, setMsg] = useState('');
 
   const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+
+  // Load latest survey title for teaser header
+  useEffect(() => {
+    const loadLatestSurveyTitle = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/surveys/latest`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json && (json.title || json.name)) {
+          setSurveyTitle(String(json.title || json.name));
+        }
+      } catch {
+        // ignore
+      }
+    };
+    loadLatestSurveyTitle();
+  }, [API_URL]);
 
   const maskPhone = (p?: string | null) => {
     const raw = String(p || '').trim();
@@ -344,12 +361,12 @@ const LuckyPage: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Survey Teaser */}
-      <div className="fixed bottom-6 right-6 z-40">
+      {/* Floating Survey Teaser (moved up to avoid overlap with callback button) */}
+      <div className="fixed bottom-24 right-6 z-30">
         <div className="bg-white/95 backdrop-blur rounded-2xl shadow-xl border p-4 w-72">
           <div className="flex items-center gap-2 mb-2">
             <ListChecks className="h-5 w-5 text-green-600" />
-            <h4 className="font-semibold">Quick Survey</h4>
+            <h4 className="font-semibold">{surveyTitle || 'Quick Survey'}</h4>
           </div>
           <p className="text-sm text-gray-600 mb-3">Take a 30-second survey and help us improve.</p>
           <button onClick={async () => {
@@ -363,6 +380,9 @@ const LuckyPage: React.FC = () => {
               const json = await res.json();
               setSurvey(json);
               setAnswers(Array.from({ length: (json?.questions || []).length }, () => ''));
+              if (json && (json.title || json.name)) {
+                setSurveyTitle(String(json.title || json.name));
+              }
             } finally {
               setSurveyLoading(false);
             }
