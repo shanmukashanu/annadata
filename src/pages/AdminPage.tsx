@@ -516,17 +516,6 @@ const AdminPage: React.FC = () => {
     { value: 'rejected', label: 'Rejected', color: 'red' },
   ];
 
-  // Admin: allow changing order status to any value directly
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    await supabase
-      .from('orders')
-      .update({ status: newStatus })
-      .eq('id', orderId);
-    // Optimistically update modal and refresh table
-    setSelectedOrder((prev: any) => (prev && prev.id === orderId ? { ...prev, status: newStatus } : prev));
-    fetchData();
-  };
-
   const getStatusBadge = (status: string) => {
     const statusConfig = orderStatuses.find(s => s.value === status) || orderStatuses[0];
     const colorClasses: Record<string, string> = {
@@ -1035,6 +1024,7 @@ const AdminPage: React.FC = () => {
         { name: 'password', type: 'text', required: true },
         { name: 'staffCode', type: 'text', required: true },
       ],
+      transfers: [],
     };
 
     return (
