@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Leaf, Phone, Mail, MapPin, Facebook, Instagram, Twitter, Youtube, Heart } from 'lucide-react';
 
 interface FooterProps {
@@ -9,12 +9,51 @@ interface FooterProps {
 const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
   const [tapCount, setTapCount] = useState(0);
   const timerRef = useRef<number | null>(null);
+  const [showStaffDialog, setShowStaffDialog] = useState(false);
+  const [staffCode, setStaffCode] = useState('');
+  const [staffError, setStaffError] = useState('');
+  const [showAdminDialog, setShowAdminDialog] = useState(false);
+  const [adminCode, setAdminCode] = useState('');
+  const [adminError, setAdminError] = useState('');
+  const navigate = useNavigate();
 
   useEffect(() => {
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
   }, []);
+
+  const openAdminDialog = () => {
+    setAdminError('');
+    setAdminCode('');
+    setShowAdminDialog(true);
+  };
+
+  const handleAdminSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminCode.trim() === '98') {
+      setShowAdminDialog(false);
+      navigate('/admin');
+    } else {
+      setAdminError('Invalid code');
+    }
+  };
+
+  const openStaffDialog = () => {
+    setStaffError('');
+    setStaffCode('');
+    setShowStaffDialog(true);
+  };
+
+  const handleStaffSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (staffCode.trim() === '43') {
+      setShowStaffDialog(false);
+      navigate('/staff-login');
+    } else {
+      setStaffError('Invalid code');
+    }
+  };
 
   const handleSecretTap = () => {
     // Count 4 taps within 1500ms
@@ -114,6 +153,17 @@ const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
                   <span>manchumadhumerin@gmail.com</span>
                 </a>
               </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={openStaffDialog}
+                  className="flex items-center space-x-2 text-white hover:text-orange-400 transition-colors"
+                  aria-label="Staff access"
+                >
+                  <Heart className="h-4 w-4" />
+                  <span className="text-xs"></span>
+                </button>
+              </li>
             </ul>
           </div>
 
@@ -148,8 +198,16 @@ const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
       <div className="border-t border-green-800" onClick={handleSecretTap}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
-            <p className="text-green-300 text-sm">
+            <p className="text-green-300 text-sm flex items-center">
               © {new Date().getFullYear()} Annadata Fruit Bowl. All rights reserved.
+              <button
+                type="button"
+                onClick={openAdminDialog}
+                className="ml-2 p-1 rounded hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-white/30"
+                aria-label="More info"
+              >
+                <Leaf className="h-3 w-3 text-white opacity-80" />
+              </button>
             </p>
             <p className="text-green-300 text-sm flex items-center">
               Website Made with <Heart className="h-4 w-4 text-red-500 mx-1 fill-current" /> for Farmers
@@ -157,6 +215,78 @@ const Footer: React.FC<FooterProps> = ({ onSecretTrigger }) => {
           </div>
         </div>
       </div>
+      {/* Staff Code Dialog */}
+      {showStaffDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-green-900 border border-green-700 rounded-lg p-6 w-80 shadow-xl">
+            <h4 className="text-white font-semibold mb-3">Staff Access</h4>
+            <form onSubmit={handleStaffSubmit}>
+              <input
+                type="password"
+                value={staffCode}
+                onChange={(e) => setStaffCode(e.target.value)}
+                placeholder="Enter staff code"
+                className="w-full px-3 py-2 rounded bg-green-800 border border-green-700 text-white placeholder-green-400 focus:outline-none focus:border-orange-400"
+                autoFocus
+              />
+              {staffError && (
+                <p className="text-red-400 text-xs mt-2">{staffError}</p>
+              )}
+              <div className="flex justify-end space-x-2 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowStaffDialog(false)}
+                  className="px-3 py-1.5 rounded border border-green-700 text-green-200 hover:bg-green-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded bg-orange-500 hover:bg-orange-600 text-white font-medium"
+                >
+                  Continue
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Admin Code Dialog */}
+      {showAdminDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-green-900 border border-green-700 rounded-lg p-6 w-80 shadow-xl">
+            <h4 className="text-white font-semibold mb-3">Admin Access</h4>
+            <form onSubmit={handleAdminSubmit}>
+              <input
+                type="password"
+                value={adminCode}
+                onChange={(e) => setAdminCode(e.target.value)}
+                placeholder="Enter admin code"
+                className="w-full px-3 py-2 rounded bg-green-800 border border-green-700 text-white placeholder-green-400 focus:outline-none focus:border-orange-400"
+                autoFocus
+              />
+              {adminError && (
+                <p className="text-red-400 text-xs mt-2">{adminError}</p>
+              )}
+              <div className="flex justify-end space-x-2 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAdminDialog(false)}
+                  className="px-3 py-1.5 rounded border border-green-700 text-green-200 hover:bg-green-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded bg-orange-500 hover:bg-orange-600 text-white font-medium"
+                >
+                  Continue
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </footer>
   );
 };
