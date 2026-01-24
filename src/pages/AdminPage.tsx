@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Leaf, LogOut, Package, Star, MessageSquare, Phone, Mail, Users, 
   FileText, Award, Plus, Trash2, Edit, X, Save, Loader2, Menu,
-  ShoppingCart, Clock, CheckCircle, Truck, CreditCard
+  ShoppingCart, Clock, CheckCircle, Truck, CreditCard, ListChecks
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
-type TabType = 'orders' | 'products' | 'reviews' | 'blogs' | 'floating' | 'contacts' | 'callbacks' | 'enquiries' | 'farmers' | 'subscribers' | 'plans' | 'newsletter' | 'participants' | 'payments' | 'paid_orders';
+type TabType = 'orders' | 'products' | 'reviews' | 'blogs' | 'floating' | 'contacts' | 'callbacks' | 'enquiries' | 'farmers' | 'subscribers' | 'plans' | 'newsletter' | 'participants' | 'payments' | 'paid_orders' | 'surveys' | 'staff' | 'transfers';
 
 const AdminPage: React.FC = () => {
   const { isAdmin, logout, adminEmail, token } = useAuth();
@@ -31,6 +31,20 @@ const AdminPage: React.FC = () => {
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'total_desc' | 'total_asc'>('date_desc');
   const [showOnly, setShowOnly] = useState<'all' | 'products' | 'plans'>('all');
   const [expandedSubs, setExpandedSubs] = useState<Record<string, boolean>>({});
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'admin_rejected' | 'out_of_stock' | 'paid' | 'confirmed' | 'shipped' | 'out_for_delivery' | 'customer_rejected' | 'delivered' | 'rejected'>('all');
+  const [surveyQuestions, setSurveyQuestions] = useState<{ text: string; required: boolean }[]>([{ text: '', required: false }]);
+  const [showResponsesFor, setShowResponsesFor] = useState<any>(null);
+  const [responses, setResponses] = useState<any[]>([]);
+  const [responsesLoading, setResponsesLoading] = useState(false);
+  const [surveySubtab, setSurveySubtab] = useState<'out' | 'in'>('out');
+  const [newSurvey, setNewSurvey] = useState<{ title: string; description: string; active: boolean }>({ title: '', description: '', active: true });
+  const [selectedRespondentIdx, setSelectedRespondentIdx] = useState<number | null>(null);
+  const [paymentFilter, setPaymentFilter] = useState<'all' | 'cod' | 'payment_pending' | 'payment_success'>('all');
+  const [paymentsByOrder, setPaymentsByOrder] = useState<Record<string, { status: string; method?: string }>>({});
+  const [paymentsStatusFilter, setPaymentsStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [paymentsMethodFilter, setPaymentsMethodFilter] = useState<'all' | 'qr' | 'upi' | 'card' | 'unknown'>('all');
+  const [staffFilter, setStaffFilter] = useState<'all' | string>('all');
+  const [staffByOrder, setStaffByOrder] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!isAdmin) {
@@ -58,6 +72,10 @@ const AdminPage: React.FC = () => {
       newsletter: 'subscribers',
       participants: 'participants',
       payments: 'payments',
+      paid_orders: 'payments',
+      surveys: 'surveys',
+      staff: 'staff',
+      transfers: 'transfers',
     };
     return tables[activeTab];
   };
@@ -114,12 +132,13 @@ const AdminPage: React.FC = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    const backendTabs: TabType[] = ['plans', 'newsletter', 'participants', 'products', 'reviews', 'blogs', 'farmers', 'subscribers', 'payments'];
+    const backendTabs: TabType[] = ['plans', 'newsletter', 'participants', 'products', 'reviews', 'blogs', 'farmers', 'subscribers', 'payments', 'surveys', 'staff', 'transfers'];
     if (backendTabs.includes(activeTab)) {
       const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
       const endpoint =
         activeTab === 'farmers' ? 'lucky-farmers'
         : activeTab === 'subscribers' ? 'lucky-subscribers'
+        : activeTab === 'transfers' ? 'admin/transfers'
         : getTableName();
       const res = await fetch(`${API_URL}/api/${endpoint}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -174,6 +193,41 @@ const AdminPage: React.FC = () => {
         }
 
         setOrdersWithPlans(planMap);
+
+        // Load payments to map latest status/method per orderNumber for payment column/filtering
+        try {
+          const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+          const payRes = await fetch(`${API_URL}/api/payments`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+          const payJson: any[] = await payRes.json();
+          const pm: Record<string, { status: string; method?: string }> = {};
+          (payJson || []).forEach((p: any) => {
+            // keep latest by createdAt
+            const k = String(p.orderNumber || '').trim();
+            if (!k) return;
+            if (!pm[k] || new Date(p.createdAt).getTime() > (pm as any)[k]._ts) {
+              (pm as any)[k] = { status: String(p.status || 'pending'), method: p.method, _ts: new Date(p.createdAt).getTime() };
+            }
+          });
+          // strip helper
+          const clean: Record<string, { status: string; method?: string }> = {};
+          Object.keys(pm).forEach((k) => { clean[k] = { status: (pm as any)[k].status, method: (pm as any)[k].method }; });
+          setPaymentsByOrder(clean);
+        } catch {}
+
+        // Load latest staff action per order to show 'Handled by' and support staff filtering
+        try {
+          const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+          const orderNumbers = rows.map((r: any) => r.order_number).filter(Boolean).join(',');
+          if (orderNumbers) {
+            const res2 = await fetch(`${API_URL}/api/staff-actions?orderNumbers=${encodeURIComponent(orderNumbers)}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+            const list = await res2.json();
+            const mapHandled: Record<string, string> = {};
+            (list || []).forEach((it: any) => { mapHandled[it.orderNumber] = it.staffCode; });
+            setStaffByOrder(mapHandled);
+          } else {
+            setStaffByOrder({});
+          }
+        } catch {}
       }
     }
     setLoading(false);
@@ -181,7 +235,7 @@ const AdminPage: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this item?')) return;
-    const backendTabs: TabType[] = ['plans', 'newsletter', 'participants', 'products', 'reviews', 'blogs', 'farmers', 'subscribers'];
+    const backendTabs: TabType[] = ['plans', 'newsletter', 'participants', 'products', 'reviews', 'blogs', 'farmers', 'subscribers', 'payments', 'surveys', 'staff'];
     if (backendTabs.includes(activeTab)) {
       const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
       const endpoint =
@@ -230,30 +284,77 @@ const AdminPage: React.FC = () => {
           body: fd,
         });
       } else {
-        const backendTabs: TabType[] = ['products', 'reviews', 'blogs', 'farmers', 'subscribers'];
+        const backendTabs: TabType[] = ['products', 'reviews', 'blogs', 'farmers', 'subscribers', 'surveys', 'staff'];
         if (backendTabs.includes(activeTab)) {
-          const fd = new FormData();
           let endpoint = getTableName();
           if (activeTab === 'farmers') endpoint = 'lucky-farmers';
           if (activeTab === 'subscribers') endpoint = 'lucky-subscribers';
-
-          if (activeTab === 'products') {
+          if (activeTab === 'surveys') {
+            const parseQuestions = () => {
+              const qs = formData.questions;
+              if (Array.isArray(qs)) return qs;
+              if (typeof qs === 'string') {
+                try {
+                  const arr = JSON.parse(qs);
+                  if (Array.isArray(arr)) {
+                    return arr
+                      .map((it: any) => ({ text: String((it?.text ?? it) || '').trim(), required: !!it?.required }))
+                      .filter((q: any) => q.text);
+                  }
+                } catch {}
+                return String(qs)
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map((t) => ({ text: t, required: false }));
+              }
+              return [];
+            };
+            const body = {
+              title: formData.title || '',
+              description: formData.description || '',
+              active: !!formData.active,
+              questions: parseQuestions(),
+            };
+            await fetch(`${API_URL}/api/${endpoint}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify(body),
+            });
+          } else if (activeTab === 'staff') {
+            const body = {
+              name: formData.name || '',
+              username: formData.username || '',
+              password: formData.password || '',
+              staffCode: formData.staffCode || '',
+              active: formData.active !== false,
+            };
+            await fetch(`${API_URL}/api/${endpoint}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify(body),
+            });
+          } else if (activeTab === 'products') {
+            const fd = new FormData();
             fd.append('name', formData.name || '');
             if (formData.description) fd.append('description', formData.description);
             if (formData.price != null) fd.append('price', String(formData.price));
             if (formData.image_url) fd.append('imageUrl', formData.image_url);
             if (formData.imageFile) fd.append('image', formData.imageFile);
           } else if (activeTab === 'reviews') {
+            const fd = new FormData();
             fd.append('name', formData.name || '');
             if (formData.review_text) fd.append('text', formData.review_text);
             if (formData.image_url) fd.append('imageUrl', formData.image_url);
             if (formData.imageFile) fd.append('image', formData.imageFile);
           } else if (activeTab === 'blogs') {
+            const fd = new FormData();
             fd.append('title', formData.title || '');
             if (formData.content) fd.append('content', formData.content);
             if (formData.image_url) fd.append('mediaUrl', formData.image_url);
             if (formData.imageFile) fd.append('media', formData.imageFile);
           } else if (activeTab === 'farmers' || activeTab === 'subscribers') {
+            const fd = new FormData();
             fd.append('name', formData.name || '');
             if (formData.content) fd.append('content', formData.content);
             if (formData.phone) fd.append('phone', formData.phone);
@@ -261,11 +362,38 @@ const AdminPage: React.FC = () => {
             if (formData.imageFile) fd.append('image', formData.imageFile);
           }
 
-          await fetch(`${API_URL}/api/${endpoint}`, {
-            method: 'POST',
-            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            body: fd,
-          });
+          // If not surveys, send FormData (fd). Since we declared a new fd per-branch, we need to resend based on activeTab
+          if (activeTab === 'products' || activeTab === 'reviews' || activeTab === 'blogs' || activeTab === 'farmers' || activeTab === 'subscribers') {
+            const fdToSend = new FormData();
+            if (activeTab === 'products') {
+              fdToSend.append('name', formData.name || '');
+              if (formData.description) fdToSend.append('description', formData.description);
+              if (formData.price != null) fdToSend.append('price', String(formData.price));
+              if (formData.image_url) fdToSend.append('imageUrl', formData.image_url);
+              if (formData.imageFile) fdToSend.append('image', formData.imageFile);
+            } else if (activeTab === 'reviews') {
+              fdToSend.append('name', formData.name || '');
+              if (formData.review_text) fdToSend.append('text', formData.review_text);
+              if (formData.image_url) fdToSend.append('imageUrl', formData.image_url);
+              if (formData.imageFile) fdToSend.append('image', formData.imageFile);
+            } else if (activeTab === 'blogs') {
+              fdToSend.append('title', formData.title || '');
+              if (formData.content) fdToSend.append('content', formData.content);
+              if (formData.image_url) fdToSend.append('mediaUrl', formData.image_url);
+              if (formData.imageFile) fdToSend.append('media', formData.imageFile);
+            } else if (activeTab === 'farmers' || activeTab === 'subscribers') {
+              fdToSend.append('name', formData.name || '');
+              if (formData.content) fdToSend.append('content', formData.content);
+              if (formData.phone) fdToSend.append('phone', formData.phone);
+              if (formData.image_url) fdToSend.append('imageUrl', formData.image_url);
+              if (formData.imageFile) fdToSend.append('image', formData.imageFile);
+            }
+            await fetch(`${API_URL}/api/${endpoint}`, {
+              method: 'POST',
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+              body: fdToSend,
+            });
+          }
         } else {
           await supabase.from(getTableName()).insert([formData]);
         }
@@ -369,23 +497,42 @@ const AdminPage: React.FC = () => {
     { id: 'participants', label: 'Participants', icon: Users },
     { id: 'payments', label: 'Payments', icon: CreditCard },
     { id: 'paid_orders', label: 'Paid Orders', icon: CreditCard },
+    { id: 'surveys', label: 'Surveys', icon: ListChecks },
+    { id: 'staff', label: 'Staff', icon: Users },
+    { id: 'transfers', label: 'Transfers', icon: Truck },
   ];
 
   const orderStatuses = [
-    { value: 'pending', label: 'Pending', color: 'yellow', icon: Clock },
-    { value: 'confirmed', label: 'Confirmed', color: 'blue', icon: CheckCircle },
-    { value: 'out_for_delivery', label: 'Out for Delivery', color: 'purple', icon: Truck },
-    { value: 'delivered', label: 'Delivered', color: 'green', icon: CheckCircle },
-    { value: 'rejected', label: 'Rejected', color: 'red', icon: X },
-    { value: 'out_of_stock', label: 'Out of Stock', color: 'orange', icon: Package },
-    { value: 'paid', label: 'Paid', color: 'green', icon: CheckCircle },
+    { value: 'pending', label: 'Pending', color: 'yellow' },
+    { value: 'admin_rejected', label: 'Admin Rejected', color: 'red' },
+    { value: 'out_of_stock', label: 'Out of Stock', color: 'orange' },
+    { value: 'paid', label: 'Paid', color: 'green' },
+    { value: 'confirmed', label: 'Confirmed', color: 'blue' },
+    { value: 'shipped', label: 'Shipped', color: 'indigo' },
+    { value: 'out_for_delivery', label: 'Out for Delivery', color: 'purple' },
+    { value: 'customer_rejected', label: 'Customer Rejected', color: 'red' },
+    { value: 'delivered', label: 'Delivered', color: 'green' },
+    // legacy
+    { value: 'rejected', label: 'Rejected', color: 'red' },
   ];
+
+  // Admin: allow changing order status to any value directly
+  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+    await supabase
+      .from('orders')
+      .update({ status: newStatus })
+      .eq('id', orderId);
+    // Optimistically update modal and refresh table
+    setSelectedOrder((prev: any) => (prev && prev.id === orderId ? { ...prev, status: newStatus } : prev));
+    fetchData();
+  };
 
   const getStatusBadge = (status: string) => {
     const statusConfig = orderStatuses.find(s => s.value === status) || orderStatuses[0];
     const colorClasses: Record<string, string> = {
       yellow: 'bg-yellow-100 text-yellow-800',
       blue: 'bg-blue-100 text-blue-800',
+      indigo: 'bg-indigo-100 text-indigo-800',
       purple: 'bg-purple-100 text-purple-800',
       green: 'bg-green-100 text-green-800',
       red: 'bg-red-100 text-red-800',
@@ -426,8 +573,29 @@ const AdminPage: React.FC = () => {
       return showOnly === 'plans' ? hasPlan : !hasPlan;
     });
 
+    // Apply status filter
+    const filteredByStatus = filteredByType.filter((order) => statusFilter === 'all' ? true : String(order.status) === statusFilter);
+
+    // Apply payment filter
+    const filteredByPayment = filteredByStatus.filter((order) => {
+      if (paymentFilter === 'all') return true;
+      const paid = String(order.status) === 'paid' || (paymentsByOrder[order.order_number]?.status === 'approved');
+      const pending = paymentsByOrder[order.order_number]?.status === 'pending';
+      if (paymentFilter === 'payment_success') return paid;
+      if (paymentFilter === 'payment_pending') return !paid && pending;
+      // cod => no online payment record and not paid
+      return !paid && !pending;
+    });
+
+    // Apply staff filter
+    const filteredByStaff = filteredByPayment.filter((order) => {
+      if (staffFilter === 'all') return true;
+      const code = staffByOrder[order.order_number] || '';
+      return code === staffFilter;
+    });
+
     // Apply sorting
-    const sorted = [...filteredByType].sort((a: any, b: any) => {
+    const sorted = [...filteredByStaff].sort((a: any, b: any) => {
       if (sortBy === 'date_desc') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       if (sortBy === 'date_asc') return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       if (sortBy === 'total_desc') return Number(b.total) - Number(a.total);
@@ -465,6 +633,46 @@ const AdminPage: React.FC = () => {
               >Plans</button>
             </div>
             <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="px-3 py-2 border rounded-lg bg-white"
+              title="Filter by order status"
+            >
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="admin_rejected">Admin Rejected</option>
+              <option value="out_of_stock">Out of Stock</option>
+              <option value="paid">Paid</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="shipped">Shipped</option>
+              <option value="out_for_delivery">Out for Delivery</option>
+              <option value="customer_rejected">Customer Rejected</option>
+              <option value="delivered">Delivered</option>
+              <option value="rejected">Rejected (legacy)</option>
+            </select>
+            <select
+              value={paymentFilter}
+              onChange={(e) => setPaymentFilter(e.target.value as any)}
+              className="px-3 py-2 border rounded-lg bg-white"
+              title="Filter by payment"
+            >
+              <option value="all">All payments</option>
+              <option value="payment_pending">Payment pending</option>
+              <option value="payment_success">Payment success</option>
+              <option value="cod">COD</option>
+            </select>
+            <select
+              value={staffFilter}
+              onChange={(e) => setStaffFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg bg-white"
+              title="Filter by staff code"
+            >
+              <option value="all">All staff</option>
+              {Array.from(new Set(Object.values(staffByOrder).filter(Boolean))).map((code) => (
+                <option key={code} value={code}>{code}</option>
+              ))}
+            </select>
+            <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
               className="px-3 py-2 border rounded-lg bg-white"
@@ -475,7 +683,7 @@ const AdminPage: React.FC = () => {
               <option value="total_asc">Total: Low → High</option>
             </select>
             <button
-              onClick={() => { setSearchTerm(''); setShowOnly('all'); setSortBy('date_desc'); }}
+              onClick={() => { setSearchTerm(''); setShowOnly('all'); setStatusFilter('all'); setPaymentFilter('all'); setStaffFilter('all'); setSortBy('date_desc'); }}
               className="px-3 py-2 border rounded-lg hover:bg-gray-50"
             >Reset Filters</button>
           </div>
@@ -492,6 +700,8 @@ const AdminPage: React.FC = () => {
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Handled by</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
@@ -506,6 +716,16 @@ const AdminPage: React.FC = () => {
                 </td>
                 <td className="px-4 py-4 text-sm font-semibold">₹{Number(order.total).toFixed(2)}</td>
                 <td className="px-4 py-4">{getStatusBadge(order.status)}</td>
+                <td className="px-4 py-4 text-sm">
+                  {String(order.status) === 'paid' ? (
+                    <span className="text-green-700">Paid</span>
+                  ) : paymentsByOrder[order.order_number] ? (
+                    <span className="text-orange-700">{(paymentsByOrder[order.order_number].method || 'online').toUpperCase()} • {paymentsByOrder[order.order_number].status}</span>
+                  ) : (
+                    <span>COD</span>
+                  )}
+                </td>
+                <td className="px-4 py-4 text-sm">{staffByOrder[order.order_number] || '-'}</td>
                 <td className="px-4 py-4 text-sm text-gray-500">
                   {new Date(order.created_at).toLocaleDateString('en-IN')}
                 </td>
@@ -572,7 +792,6 @@ const AdminPage: React.FC = () => {
                         : 'border-gray-200 hover:border-gray-300'
                     }`}
                   >
-                    <status.icon className="h-4 w-4" />
                     <span>{status.label}</span>
                   </button>
                 ))}
@@ -803,6 +1022,19 @@ const AdminPage: React.FC = () => {
       ],
       newsletter: [],
       participants: [],
+      payments: [],
+      paid_orders: [],
+      surveys: [
+        { name: 'title', type: 'text', required: true },
+        { name: 'description', type: 'textarea' },
+        { name: 'questions', type: 'textarea' },
+      ],
+      staff: [
+        { name: 'name', type: 'text' },
+        { name: 'username', type: 'text', required: true },
+        { name: 'password', type: 'text', required: true },
+        { name: 'staffCode', type: 'text', required: true },
+      ],
     };
 
     return (
@@ -882,6 +1114,218 @@ const AdminPage: React.FC = () => {
   };
 
   const renderTable = () => {
+    if (activeTab === 'transfers') {
+      if (loading) {
+        return (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+          </div>
+        );
+      }
+      if (data.length === 0) return <div className="text-center py-20 text-gray-500">No transfers found.</div>;
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">From</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">To</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Decided At</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {data.map((t:any) => (
+                <tr key={t.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-green-700 font-medium">{t.orderNumber}</td>
+                  <td className="px-4 py-3 text-sm">{t.fromStaff}</td>
+                  <td className="px-4 py-3 text-sm">{t.toStaff}</td>
+                  <td className="px-4 py-3 text-sm capitalize">{t.status}</td>
+                  <td className="px-4 py-3 text-sm">{t.decidedAt ? new Date(t.decidedAt).toLocaleString() : '-'}</td>
+                  <td className="px-4 py-3 text-sm">{t.createdAt ? new Date(t.createdAt).toLocaleString() : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    if (activeTab === 'surveys') {
+      const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+      const loadResponses = async (survey: any) => {
+        setShowResponsesFor(survey);
+        setResponses([]);
+        setResponsesLoading(true);
+        try {
+          const res = await fetch(`${API_URL}/api/surveys/${survey.id}/responses`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+          const json = await res.json();
+          setResponses(Array.isArray(json) ? json : []);
+          setSelectedRespondentIdx(null);
+        } finally {
+          setResponsesLoading(false);
+        }
+      };
+
+      const saveSurvey = async () => {
+        const body = {
+          title: newSurvey.title.trim(),
+          description: newSurvey.description,
+          active: !!newSurvey.active,
+          questions: surveyQuestions
+            .map((q) => ({ text: String(q.text || '').trim(), required: !!q.required }))
+            .filter((q) => q.text),
+        };
+        if (!body.title) return alert('Title is required');
+        if (body.questions.length === 0) return alert('Add at least one question');
+        await fetch(`${API_URL}/api/surveys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify(body),
+        });
+        // reset and switch to Out
+        setNewSurvey({ title: '', description: '', active: true });
+        setSurveyQuestions([{ text: '', required: false }]);
+        setSurveySubtab('out');
+        fetchData();
+      };
+
+      return (
+        <div className="p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <button className={`px-4 py-2 rounded-lg ${surveySubtab==='out' ? 'bg-green-600 text-white' : 'bg-gray-100'}`} onClick={() => setSurveySubtab('out')}>Out</button>
+            <button className={`px-4 py-2 rounded-lg ${surveySubtab==='in' ? 'bg-green-600 text-white' : 'bg-gray-100'}`} onClick={() => setSurveySubtab('in')}>In</button>
+          </div>
+
+          {surveySubtab === 'out' ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="overflow-x-auto border rounded-xl">
+                {loading ? (
+                  <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-green-600" /></div>
+                ) : data.length === 0 ? (
+                  <div className="text-center py-16 text-gray-500">No surveys found.</div>
+                ) : (
+                  <table className="w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Title</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Active</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {data.map((s) => (
+                        <tr key={s.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-gray-900">{s.title}</div>
+                            {s.description && <div className="text-xs text-gray-500">{s.description}</div>}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-1 rounded-full text-xs ${s.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>{s.active ? 'Active' : 'Inactive'}</span>
+                          </td>
+                          <td className="px-4 py-3 text-right space-x-2">
+                            <button onClick={() => loadResponses(s)} className="px-3 py-1 text-sm bg-white border rounded-lg hover:bg-gray-50">View Responses</button>
+                            <button onClick={() => handleDelete(s.id)} className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">Delete</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="border rounded-xl p-4 min-h-[200px]">
+                {!showResponsesFor ? (
+                  <div className="text-gray-500">Select a survey to view responses.</div>
+                ) : responsesLoading ? (
+                  <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-green-600" /></div>
+                ) : responses.length === 0 ? (
+                  <div className="text-gray-500">No responses yet.</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-1 space-y-2 max-h-[400px] overflow-y-auto">
+                      {responses.map((r: any, idx: number) => {
+                        const name = r?.meta?.name || r?.meta?.username || '';
+                        const phone = r?.meta?.phone || r?.meta?.customer_phone || '';
+                        const label = name || phone ? `${name || ''}${name && phone ? ' • ' : ''}${phone || ''}` : `Respondent ${idx + 1}`;
+                        return (
+                          <button key={r._id || r.id || idx} onClick={() => setSelectedRespondentIdx(idx)} className={`w-full text-left px-3 py-2 rounded-lg border ${selectedRespondentIdx===idx ? 'bg-green-50 border-green-200' : 'bg-white hover:bg-gray-50'}`}>
+                            <div className="text-sm font-medium text-gray-900 truncate">{label}</div>
+                            <div className="text-xs text-gray-500">{new Date(r.createdAt).toLocaleString()}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="md:col-span-2">
+                      {selectedRespondentIdx == null ? (
+                        <div className="text-gray-500">Pick a respondent to view answers.</div>
+                      ) : (
+                        <div className="space-y-3">
+                          {(showResponsesFor.questions || []).map((q: any, i: number) => (
+                            <div key={i} className="bg-gray-50 rounded-lg p-3">
+                              <div className="text-sm text-gray-600">Q{i+1}. {q.text}</div>
+                              <div className="text-base text-gray-900 mt-1">{String(responses[selectedRespondentIdx]?.answers?.[i] ?? '') || '-'}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="max-w-3xl">
+              <div className="grid gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Title*</label>
+                  <input value={newSurvey.title} onChange={(e) => setNewSurvey({ ...newSurvey, title: e.target.value })} className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <textarea value={newSurvey.description} onChange={(e) => setNewSurvey({ ...newSurvey, description: e.target.value })} rows={3} className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <input id="survey-active" type="checkbox" checked={newSurvey.active} onChange={(e) => setNewSurvey({ ...newSurvey, active: e.target.checked })} />
+                  <label htmlFor="survey-active" className="text-sm text-gray-700">Active</label>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-gray-700">Questions</label>
+                    <button onClick={() => setSurveyQuestions((prev) => [...prev, { text: '', required: false }])} className="px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Add Question</button>
+                  </div>
+                  <div className="space-y-3">
+                    {surveyQuestions.map((q, idx) => (
+                      <div key={idx} className="border rounded-lg p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs text-gray-500">Q{idx+1}</span>
+                          <button onClick={() => setSurveyQuestions((prev) => prev.filter((_, i) => i !== idx))} className="ml-auto text-sm px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">Remove</button>
+                        </div>
+                        <input
+                          value={q.text}
+                          onChange={(e) => setSurveyQuestions((prev) => prev.map((it, i) => i===idx ? { ...it, text: e.target.value } : it))}
+                          placeholder="Question text"
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
+                        />
+                        <div className="mt-2 flex items-center gap-2">
+                          <input id={`req-${idx}`} type="checkbox" checked={q.required} onChange={(e) => setSurveyQuestions((prev) => prev.map((it, i) => i===idx ? { ...it, required: e.target.checked } : it))} />
+                          <label htmlFor={`req-${idx}`} className="text-sm text-gray-700">Required</label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <button onClick={saveSurvey} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700">Save Survey</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     if (activeTab === 'orders') {
       return renderOrdersTable();
     }
@@ -907,11 +1351,43 @@ const AdminPage: React.FC = () => {
       };
 
       const rows = activeTab === 'paid_orders' ? (data as any[]).filter((p) => p.status === 'approved') : data;
+      const filteredRows = (rows as any[]).filter((p) => {
+        const statusOk = paymentsStatusFilter === 'all' ? true : String(p.status) === paymentsStatusFilter;
+        const method = String(p.method || 'unknown').toLowerCase();
+        const methodOk = paymentsMethodFilter === 'all' ? true : method.includes(paymentsMethodFilter);
+        return statusOk && methodOk;
+      });
       if (rows.length === 0) {
         return <div className="text-center py-20 text-gray-500">No payments found.</div>;
       }
       return (
         <div className="overflow-x-auto">
+          <div className="p-4 flex items-center gap-2">
+            <select
+              value={paymentsStatusFilter}
+              onChange={(e) => setPaymentsStatusFilter(e.target.value as any)}
+              className="px-3 py-2 border rounded-lg bg-white"
+              title="Filter by payment status"
+            >
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <select
+              value={paymentsMethodFilter}
+              onChange={(e) => setPaymentsMethodFilter(e.target.value as any)}
+              className="px-3 py-2 border rounded-lg bg-white"
+              title="Filter by payment method"
+            >
+              <option value="all">All methods</option>
+              <option value="qr">QR</option>
+              <option value="upi">UPI</option>
+              <option value="card">Card</option>
+              <option value="unknown">Unknown</option>
+            </select>
+            <button onClick={() => { setPaymentsStatusFilter('all'); setPaymentsMethodFilter('all'); }} className="px-3 py-2 border rounded-lg hover:bg-gray-50">Reset</button>
+          </div>
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
@@ -926,7 +1402,7 @@ const AdminPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {rows.map((p: any) => (
+              {filteredRows.map((p: any) => (
                 <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-4 text-sm font-medium text-green-600">{p.orderNumber}</td>
                   <td className="px-4 py-4 text-sm">{p.customerName || '-'}</td>
@@ -946,6 +1422,12 @@ const AdminPage: React.FC = () => {
                       <>
                         <button onClick={() => approve(p.id, p.orderNumber)} className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200" disabled={p.status === 'approved'}>Approve</button>
                         <button onClick={() => reject(p.id)} className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200" disabled={p.status === 'rejected'}>Reject</button>
+                        <button onClick={async () => {
+                          const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+                          if (!confirm('Delete this payment record?')) return;
+                          await fetch(`${API_URL}/api/payments/${p.id}` , { method: 'DELETE', headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+                          fetchData();
+                        }} className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">Delete</button>
                       </>
                     )}
                   </td>
@@ -966,14 +1448,24 @@ const AdminPage: React.FC = () => {
     }
 
     if (data.length === 0) {
+      const canAdd = !['contacts', 'callbacks', 'enquiries', 'orders', 'newsletter', 'participants', 'surveys'].includes(activeTab);
       return (
-        <div className="text-center py-20 text-gray-500">
-          No data found.
+        <div className="text-center py-20">
+          <div className="text-gray-500 mb-4">No data found.</div>
+          {canAdd && (
+            <button
+              onClick={() => openForm()}
+              className="inline-flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+            >
+              <Plus className="h-5 w-5" />
+              <span>Add New</span>
+            </button>
+          )}
         </div>
       );
     }
 
-    let columns = Object.keys(data[0]).filter(k => k !== 'id' && k !== 'created_at' && k !== 'password_hash' && k !== 'updated_at');
+    let columns = Object.keys(data[0]).filter(k => k !== 'id' && k !== 'created_at' && k !== 'password_hash' && k !== 'passwordHash' && k !== 'updated_at');
     // Ensure participants show key fields including phone
     if (activeTab === 'participants') {
       const desired = ['name', 'role', 'email', 'phone', 'message'];
@@ -1102,7 +1594,7 @@ const AdminPage: React.FC = () => {
                 <LogOut className="h-5 w-5" />
                 <span className="hidden sm:inline">Logout</span>
               </button>
-              {!['contacts', 'callbacks', 'enquiries', 'orders', 'newsletter', 'participants'].includes(activeTab) && (
+              {!['contacts', 'callbacks', 'enquiries', 'orders', 'newsletter', 'participants', 'surveys'].includes(activeTab) && (
                 <button
                   onClick={() => openForm()}
                   className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"

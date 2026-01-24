@@ -44,6 +44,319 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// Admin-only auth middleware (must be defined before first use)
+const authenticateAdmin = (req, res, next) => {
+  // Allow static admin key for simple automation
+  const key = req.headers['x-admin-key'];
+  if (key && process.env.ADMIN_KEY && key === process.env.ADMIN_KEY) return next();
+
+  // Fallback to JWT Bearer with role 'admin'
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    try {
+      const token = auth.substring(7);
+      const payload = jwt.verify(token, process.env.JWT_SECRET || '');
+      if (payload && payload.role === 'admin') return next();
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+};
+
+// Hoisted auth that allows either admin or staff (avoid TDZ on const defs below)
+function authenticateAny(req, res, next) {
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    try {
+      const token = auth.substring(7);
+      const payload = jwt.verify(token, process.env.JWT_SECRET || '');
+      if (payload && (payload.role === 'admin' || payload.role === 'staff')) return next();
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+}
+
+// Staff admin endpoints
+app.get('/api/staff', authenticateAdmin, async (req, res) => {
+  const items = await Staff.find().sort({ createdAt: -1 });
+  res.json(items);
+});
+app.post('/api/staff', authenticateAdmin, async (req, res) => {
+  try {
+    const { name, username, password, staffCode, active } = req.body;
+    if (!username || !password || !staffCode) return res.status(400).json({ error: 'username, password, staffCode required' });
+    const hash = await bcrypt.hash(password, 10);
+    const created = await Staff.create({ name, username: String(username).toLowerCase().trim(), passwordHash: hash, staffCode: String(staffCode).toUpperCase().trim(), active: active !== false });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to create staff' });
+  }
+});
+app.delete('/api/staff/:id', authenticateAdmin, async (req, res) => {
+  await Staff.findByIdAndDelete(req.params.id);
+  res.json({ success: true });
+});
+
+// Minimal staff list for staff/admin (for transfer UI)
+app.get('/api/staff/list', authenticateAny, async (req, res) => {
+  const items = await Staff.find({ active: true }).select('name username staffCode active createdAt updatedAt').sort({ createdAt: -1 });
+  res.json(items);
+});
+
+// Staff login -> JWT with role 'staff'
+app.post('/api/staff/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const user = await Staff.findOne({ username: String(username).toLowerCase().trim(), active: true });
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT secret not configured' });
+    const token = jwt.sign({ sub: String(user._id), role: 'staff', username: user.username, staffCode: user.staffCode, name: user.name || '' }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, staffCode: user.staffCode, username: user.username, name: user.name || '' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+const authenticateStaff = (req, res, next) => {
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    try {
+      const token = auth.substring(7);
+      const payload = jwt.verify(token, process.env.JWT_SECRET || '');
+      if (payload && payload.role === 'staff') {
+        req.staff = payload;
+        return next();
+      }
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+};
+
+// Allow either admin or staff
+const authenticateAdminOrStaff = (req, res, next) => {
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    try {
+      const token = auth.substring(7);
+      const payload = jwt.verify(token, process.env.JWT_SECRET || '');
+      if (payload && (payload.role === 'admin' || payload.role === 'staff')) return next();
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+};
+
+// Staff: record order status change (client will also update order in Supabase)
+app.post('/api/staff-actions', authenticateStaff, async (req, res) => {
+  try {
+    const { orderId, orderNumber, prevStatus, newStatus } = req.body;
+    if (!orderNumber || !newStatus) return res.status(400).json({ error: 'orderNumber and newStatus required' });
+    const created = await StaffOrderAction.create({ orderId, orderNumber, prevStatus, newStatus, staffCode: req.staff.staffCode });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to record action' });
+  }
+});
+
+// Admin: get latest staff action per orderNumber list
+app.get('/api/staff-actions', authenticateAdminOrStaff, async (req, res) => {
+  const list = String(req.query.orderNumbers || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!list.length) return res.json([]);
+  const items = await StaffOrderAction.aggregate([
+    { $match: { orderNumber: { $in: list } } },
+    { $sort: { createdAt: -1 } },
+    { $group: { _id: '$orderNumber', latest: { $first: '$$ROOT' } } },
+  ]);
+  res.json(items.map(i => i.latest));
+});
+
+// Staff: accept an order (creates assignment if none exists)
+app.post('/api/staff/assign', authenticateStaff, async (req, res) => {
+  try {
+    const { orderNumber, orderId } = req.body;
+    if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+    const existing = await StaffAssignment.findOne({ orderNumber, status: 'active' });
+    if (existing) return res.status(409).json({ error: 'Order already assigned' });
+    const created = await StaffAssignment.create({ orderNumber, orderId, staffCode: req.staff.staffCode, status: 'active' });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to assign' });
+  }
+});
+
+// Staff: my active assignments
+app.get('/api/staff/my-assignments', authenticateStaff, async (req, res) => {
+  const items = await StaffAssignment.find({ staffCode: req.staff.staffCode, status: 'active' }).sort({ createdAt: -1 });
+  res.json(items);
+});
+
+// Staff: my completed assignments
+app.get('/api/staff/my-completed', authenticateStaff, async (req, res) => {
+  const items = await StaffAssignment.find({ staffCode: req.staff.staffCode, status: 'completed' }).sort({ updatedAt: -1 });
+  res.json(items);
+});
+
+// Staff: mark assignment completed (typically when delivered)
+app.post('/api/staff/complete', authenticateStaff, async (req, res) => {
+  try {
+    const { orderNumber } = req.body;
+    if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+    const updated = await StaffAssignment.findOneAndUpdate(
+      { orderNumber, staffCode: req.staff.staffCode, status: 'active' },
+      { status: 'completed' },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: 'Active assignment not found' });
+    res.json(updated);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to complete' });
+  }
+});
+
+// Staff: create transfer request
+app.post('/api/staff/transfers', authenticateStaff, async (req, res) => {
+  try {
+    const { orderNumber, toStaff } = req.body;
+    if (!orderNumber || !toStaff) return res.status(400).json({ error: 'orderNumber and toStaff required' });
+    const assignment = await StaffAssignment.findOne({ orderNumber, status: 'active' });
+    if (!assignment || assignment.staffCode !== req.staff.staffCode) return res.status(403).json({ error: 'You do not own this assignment' });
+    const pending = await TransferRequest.findOne({ orderNumber, status: 'pending' });
+    if (pending) return res.status(409).json({ error: 'Transfer already pending' });
+    const created = await TransferRequest.create({ orderNumber, fromStaff: req.staff.staffCode, toStaff, status: 'pending' });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to create transfer' });
+  }
+});
+
+// Staff: list transfer requests (incoming for me + outgoing I created)
+app.get('/api/staff/transfers', authenticateStaff, async (req, res) => {
+  const me = req.staff.staffCode;
+  const items = await TransferRequest.find({ $or: [ { toStaff: me }, { fromStaff: me } ] }).sort({ createdAt: -1 });
+  res.json(items);
+});
+
+// Staff: accept transfer
+app.post('/api/staff/transfers/:id/accept', authenticateStaff, async (req, res) => {
+  try {
+    const tr = await TransferRequest.findById(req.params.id);
+    if (!tr) return res.status(404).json({ error: 'Not found' });
+    if (tr.status !== 'pending') return res.status(400).json({ error: 'Already decided' });
+    if (tr.toStaff !== req.staff.staffCode) return res.status(403).json({ error: 'Not your transfer' });
+    const assignment = await StaffAssignment.findOne({ orderNumber: tr.orderNumber, status: 'active' });
+    if (!assignment || assignment.staffCode !== tr.fromStaff) return res.status(409).json({ error: 'Assignment no longer valid' });
+    assignment.staffCode = tr.toStaff;
+    await assignment.save();
+    tr.status = 'accepted';
+    tr.decidedAt = new Date();
+    await tr.save();
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to accept transfer' });
+  }
+});
+
+// Staff: reject transfer
+app.post('/api/staff/transfers/:id/reject', authenticateStaff, async (req, res) => {
+  try {
+    const tr = await TransferRequest.findById(req.params.id);
+    if (!tr) return res.status(404).json({ error: 'Not found' });
+    if (tr.status !== 'pending') return res.status(400).json({ error: 'Already decided' });
+    if (tr.toStaff !== req.staff.staffCode) return res.status(403).json({ error: 'Not your transfer' });
+    tr.status = 'rejected';
+    tr.decidedAt = new Date();
+    await tr.save();
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to reject transfer' });
+  }
+});
+
+// Admin: list all transfer requests
+app.get('/api/admin/transfers', authenticateAdmin, async (req, res) => {
+  const items = await TransferRequest.find().sort({ createdAt: -1 });
+  res.json(items);
+});
+
+// Survey endpoints
+// Admin: create a survey
+app.post('/api/surveys', authenticateAdmin, async (req, res) => {
+  try {
+    const { title, description, questions, active } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    const q = Array.isArray(questions) ? questions.map((it) => ({
+      text: String(it.text || '').trim(),
+      required: !!it.required,
+    })).filter((x) => x.text) : [];
+    const created = await Survey.create({ title, description, questions: q, active: active !== false });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to create survey' });
+  }
+});
+
+// Admin: list surveys
+app.get('/api/surveys', authenticateAdmin, async (req, res) => {
+  const items = await Survey.find().sort({ createdAt: -1 });
+  res.json(items);
+});
+
+// Admin: delete survey
+app.delete('/api/surveys/:id', authenticateAdmin, async (req, res) => {
+  await Survey.findByIdAndDelete(req.params.id);
+  // Also delete responses for this survey
+  await SurveyResponse.deleteMany({ surveyId: req.params.id });
+  res.json({ success: true });
+});
+
+// Public: get latest active survey
+app.get('/api/surveys/latest', async (req, res) => {
+  const item = await Survey.findOne({ active: true }).sort({ createdAt: -1 });
+  res.json(item || null);
+});
+
+// Public: submit responses to a survey
+app.post('/api/surveys/:id/responses', async (req, res) => {
+  try {
+    const { answers, meta } = req.body;
+    const survey = await Survey.findById(req.params.id);
+    if (!survey) return res.status(404).json({ error: 'Survey not found' });
+    const ans = Array.isArray(answers) ? answers.map((a) => String(a ?? '')) : [];
+    // Basic validation: ensure required questions are answered (non-empty)
+    const requiredCount = (survey.questions || []).filter((q) => q.required).length;
+    const providedRequired = (survey.questions || []).reduce((acc, q, idx) => acc + (q.required && (ans[idx] || '').trim() ? 1 : 0), 0);
+    if (providedRequired < requiredCount) return res.status(400).json({ error: 'Please answer all required questions' });
+    const created = await SurveyResponse.create({ surveyId: survey._id, answers: ans, meta });
+    res.status(201).json(created);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to submit response' });
+  }
+});
+
+// Admin: list responses for a survey
+app.get('/api/surveys/:id/responses', authenticateAdmin, async (req, res) => {
+  const items = await SurveyResponse.find({ surveyId: req.params.id }).sort({ createdAt: -1 });
+  res.json(items);
+});
+
 // Use in-memory storage to stream uploads to Cloudinary with compression for faster uploads
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB cap
 
@@ -69,24 +382,6 @@ const uploadToCloudinary = (buffer, options = {}) =>
     );
     stream.end(buffer);
   });
-
-// Admin auth: allow either x-admin-key or Bearer JWT
-const authenticateAdmin = (req, res, next) => {
-  const key = req.headers['x-admin-key'];
-  if (key && process.env.ADMIN_KEY && key === process.env.ADMIN_KEY) return next();
-
-  const auth = req.headers.authorization || '';
-  if (auth.startsWith('Bearer ')) {
-    try {
-      const token = auth.substring(7);
-      const payload = jwt.verify(token, process.env.JWT_SECRET || '');
-      if (payload && payload.role === 'admin') return next();
-    } catch (e) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-  }
-  return res.status(401).json({ error: 'Unauthorized' });
-};
 
 await mongoose.connect(process.env.MONGODB_URI, { dbName: process.env.MONGODB_DB || undefined });
 
@@ -189,6 +484,35 @@ const PlanSchema = new mongoose.Schema(
 );
 const Plan = mongoose.model('Plan', PlanSchema);
 
+// Surveys
+const SurveyQuestionSchema = new mongoose.Schema(
+  {
+    text: { type: String, required: true },
+    required: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+const SurveySchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    description: { type: String },
+    questions: { type: [SurveyQuestionSchema], default: [] },
+    active: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
+const Survey = mongoose.model('Survey', SurveySchema);
+
+const SurveyResponseSchema = new mongoose.Schema(
+  {
+    surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey', required: true },
+    answers: { type: [String], default: [] },
+    meta: { type: Object },
+  },
+  { timestamps: true }
+);
+const SurveyResponse = mongoose.model('SurveyResponse', SurveyResponseSchema);
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 // Payments (user-uploaded payment receipts)
@@ -205,6 +529,57 @@ const PaymentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 const Payment = mongoose.model('Payment', PaymentSchema);
+
+// Staff accounts
+const StaffSchema = new mongoose.Schema(
+  {
+    name: { type: String },
+    username: { type: String, unique: true, required: true, lowercase: true, trim: true },
+    passwordHash: { type: String, required: true },
+    staffCode: { type: String, unique: true, required: true, uppercase: true, trim: true },
+    active: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
+const Staff = mongoose.model('Staff', StaffSchema);
+
+// Record of staff order status changes (audit)
+const StaffOrderActionSchema = new mongoose.Schema(
+  {
+    orderId: { type: String },
+    orderNumber: { type: String, required: true },
+    prevStatus: { type: String },
+    newStatus: { type: String, required: true },
+    staffCode: { type: String, required: true },
+  },
+  { timestamps: true }
+);
+const StaffOrderAction = mongoose.model('StaffOrderAction', StaffOrderActionSchema);
+
+// Staff order assignments (ownership of an order by a staff)
+const StaffAssignmentSchema = new mongoose.Schema(
+  {
+    orderNumber: { type: String, required: true, unique: true },
+    orderId: { type: String },
+    staffCode: { type: String, required: true },
+    status: { type: String, enum: ['active', 'completed'], default: 'active' },
+  },
+  { timestamps: true }
+);
+const StaffAssignment = mongoose.model('StaffAssignment', StaffAssignmentSchema);
+
+// Requests to transfer an assignment from one staff to another
+const TransferRequestSchema = new mongoose.Schema(
+  {
+    orderNumber: { type: String, required: true },
+    fromStaff: { type: String, required: true },
+    toStaff: { type: String, required: true },
+    status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+    decidedAt: { type: Date },
+  },
+  { timestamps: true }
+);
+const TransferRequest = mongoose.model('TransferRequest', TransferRequestSchema);
 
 // Admin login -> JWT
 app.post('/api/admin/login', async (req, res) => {
@@ -343,7 +718,7 @@ app.post('/api/payments', upload.single('proof'), async (req, res) => {
 });
 
 // Admin endpoints to view/moderate payments
-app.get('/api/payments', authenticateAdmin, async (req, res) => {
+app.get('/api/payments', authenticateAdminOrStaff, async (req, res) => {
   const items = await Payment.find().sort({ createdAt: -1 });
   res.json(items);
 });
@@ -354,6 +729,12 @@ app.patch('/api/payments/:id/approve', authenticateAdmin, async (req, res) => {
 app.patch('/api/payments/:id/reject', authenticateAdmin, async (req, res) => {
   const updated = await Payment.findByIdAndUpdate(req.params.id, { status: 'rejected' }, { new: true });
   res.json(updated);
+});
+
+// Admin: delete a payment record
+app.delete('/api/payments/:id', authenticateAdmin, async (req, res) => {
+  await Payment.findByIdAndDelete(req.params.id);
+  res.json({ success: true });
 });
 
 app.post('/api/contact', async (req, res) => {

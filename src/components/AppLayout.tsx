@@ -21,6 +21,8 @@ import NotFound from '@/pages/NotFound';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { CartProvider } from '@/contexts/CartContext';
 import DeveloperInfoModal from './DeveloperInfoModal';
+import StaffLoginPage from '@/pages/StaffLoginPage';
+import StaffDashboardPage from '@/pages/StaffDashboardPage';
  
 
 const AppLayout: React.FC = () => {
@@ -28,6 +30,7 @@ const AppLayout: React.FC = () => {
   const [showDevInfo, setShowDevInfo] = useState(false);
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
+  const isStaffRoute = location.pathname.startsWith('/staff');
   const isCheckoutRoute = location.pathname === '/checkout';
   const longPressTimerRef = useRef<number | null>(null);
   const longPressActiveRef = useRef(false);
@@ -87,7 +90,7 @@ const AppLayout: React.FC = () => {
     <AuthProvider>
       <CartProvider>
         <div className="min-h-screen flex flex-col">
-          {!isAdminRoute && !isCheckoutRoute && (
+          {!isAdminRoute && !isStaffRoute && !isCheckoutRoute && (
             <Navbar onCallbackClick={() => setShowCallback(true)} />
           )}
           
@@ -105,13 +108,15 @@ const AppLayout: React.FC = () => {
               <Route path="/track-order" element={<OrderTrackingPage />} />
               <Route path="/admin-login" element={<AdminLoginPage />} />
               <Route path="/admin" element={<AdminPage />} />
+              <Route path="/staff-login" element={<StaffLoginPage />} />
+              <Route path="/staff" element={<StaffDashboardPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>
 
-          {!isAdminRoute && !isCheckoutRoute && <Footer onSecretTrigger={() => setShowDevInfo(true)} />}
+          {!isAdminRoute && !isStaffRoute && !isCheckoutRoute && <Footer onSecretTrigger={() => setShowDevInfo(true)} />}
           
-          {!isAdminRoute && !isCheckoutRoute && (
+          {!isAdminRoute && !isStaffRoute && !isCheckoutRoute && (
             <FloatingCallbackButton onClick={() => setShowCallback(true)} />
           )}
 
